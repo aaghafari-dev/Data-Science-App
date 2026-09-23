@@ -1,0 +1,42 @@
+ds-studio/
+├── main.py
+├── requirements.txt
+├── app/
+│   ├── __init__.py
+│   ├── ui/
+│   │   ├── main_window.py
+│   │   ├── menus.py
+│   │   ├── toolbar.py
+│   │   ├── panels/
+│   │   │   ├── loaded_sheets.py
+│   │   │   ├── data_management.py
+│   │   │   ├── filters.py
+│   │   │   ├── extra_insight.py
+│   │   │   ├── rows_columns.py
+│   │   │   └── marks.py
+│   │   └── canvas.py
+│   ├── core/
+│   │   ├── project.py
+│   │   ├── state.py
+│   │   └── commands.py        # Undo/Redo
+│   ├── data/
+│   │   ├── loader.py
+│   │   ├── cleaning.py
+│   │   ├── preprocessing.py
+│   │   └── scraping.py
+│   ├── analysis/
+│   │   ├── stats.py
+│   │   ├── ml.py
+│   │   └── dl.py
+│   ├── agent/
+│   │   ├── loop.py            # approve / re-plan
+│   │   └── report.py          # LLM reports
+│   ├── voice/
+│   │   ├── stt.py
+│   │   └── intent.py
+│   └── export/
+│       ├── png.py
+│       ├── email.py
+│       └── streamlit_export.py
+└── assets/
+    └── icons/
