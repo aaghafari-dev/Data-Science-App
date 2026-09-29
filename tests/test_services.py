@@ -1,0 +1,16 @@
+import pandas as pd
+from services.lineage import DatasetLineage, dataset_fingerprint
+from services.privacy import detect_pii, anonymize_pii
+
+
+def test_lineage_and_hash(tmp_path):
+    df = pd.DataFrame({"a": [1, 2]})
+    h = dataset_fingerprint(df); assert len(h) == 64
+    lin = DatasetLineage(str(tmp_path)); rec = lin.snapshot(df, operation="load")
+    assert rec["dataset_hash"] == h
+
+
+def test_privacy_baseline():
+    df = pd.DataFrame({"email": ["a@example.com", "b@example.com"], "x": [1, 2]})
+    findings = detect_pii(df); assert findings["email"] == "email"
+    out = anonymize_pii(df, ["email"]); assert not out["email"].equals(df["email"])

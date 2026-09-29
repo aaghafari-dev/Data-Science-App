@@ -1,0 +1,7 @@
+# DVC-compatible pipeline skeleton. Data Science Studio Pro also keeps a local
+# content-addressed lineage ledger in lineage/ for desktop/offline use.
+stages:
+  profile:
+    cmd: python -c "from services.profiling import auto_profile; print('Run from your dataset pipeline')"
+    outs: []
+    deps: []

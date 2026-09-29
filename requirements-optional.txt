@@ -1,0 +1,26 @@
+# Optional heavyweight integrations
+# dvc
+# tensorflow
+# lightgbm
+# xgboost
+# catboost
+# jupyterlab
+# notebook
+# plotly
+# duckdb
+# polars
+# dask[dataframe]
+# Optional voice stack
+# pyttsx3
+# faster-whisper
+# sounddevice
+# V18.3 analytical/deployment integrations
+duckdb
+streamlit
+jupyter
+nbformat
+
+lxml
+
+# Optional pure-Python PDF table fallback
+pdfplumber

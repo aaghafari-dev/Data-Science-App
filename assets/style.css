@@ -1,0 +1,52 @@
+/* assets/style.css */
+/* Custom CSS to make Streamlit look more like Tableau */
+
+/* Main background */
+.stApp {
+    background-color: #f4f7f6;
+}
+
+/* Sidebar styling */
+.stSidebar {
+    background-color: #e3f2fd;
+    border-right: 1px solid #ccc;
+}
+
+/* Panel headers */
+h1, h2, h3 {
+    color: #1976d2;
+}
+
+/* Dataframe styling */
+.stDataFrame {
+    border: 1px solid #ccc;
+    border-radius: 5px;
+}
+
+/* Button styling */
+.stButton > button {
+    background-color: #1976d2;
+    color: white;
+    border-radius: 5px;
+    border: none;
+    padding: 8px 16px;
+}
+
+.stButton > button:hover {
+    background-color: #1565c0;
+}
+
+/* Selectbox styling */
+.stSelectbox > div > div {
+    background-color: white;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+}
+
+/* Plot area background */
+.stPlotlyChart {
+    background-color: white;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    padding: 10px;
+}
