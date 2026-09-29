@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QMenu, QToolBar, QStatusBar, QFileDialog, QMessageBox, QDialog,
                              QDialogButtonBox, QTextEdit, QSlider, QColorDialog, QListWidgetItem,
                              QInputDialog, QTabWidget, QSplitter, QTableWidget, QTableWidgetItem,
-                             QCheckBox, QSpinBox, QDoubleSpinBox, QGroupBox, QFormLayout, QScrollArea, QAbstractItemView, QGridLayout, QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsTextItem)
+                             QCheckBox, QSpinBox, QFontDialog, QDoubleSpinBox, QGroupBox, QFormLayout, QScrollArea, QAbstractItemView, QGridLayout, QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsTextItem)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QMimeData
 from PyQt6.QtGui import QAction, QIcon, QColor, QPalette, QFont, QKeySequence
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -74,18 +74,42 @@ class ColumnDragListWidget(QListWidget):
 
 
 class FieldDropComboBox(QComboBox):
-    """Marks field selector with live column synchronization and real drag/drop."""
+    """Tableau-like Marks field target. Multi-field properties support repeated drops/selections; Size is single-field."""
     fieldDropped = pyqtSignal(str)
-    def __init__(self,parent=None):
-        super().__init__(parent); self.setAcceptDrops(True); self.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+    fieldsChanged = pyqtSignal(list)
+    def __init__(self,parent=None,multi=True):
+        super().__init__(parent); self.multi=multi; self._selected_fields=[]
+        self.setAcceptDrops(True); self.setInsertPolicy(QComboBox.InsertPolicy.NoInsert); self.setEditable(True); self.lineEdit().setReadOnly(True)
+        self.activated.connect(self._toggle_from_popup)
+    def selected_fields(self): return list(self._selected_fields)
+    def _display(self): return ", ".join(self._selected_fields)
+    def _sync_display(self):
+        self.lineEdit().setText(self._display())
+        self.setToolTip(self._display() or "No field assigned. Drag a field here or use the dropdown.")
     def sync_fields(self,columns=None):
         if columns is None:
             w=self.window(); df=getattr(getattr(w,"data_engine",None),"df",None); columns=[] if df is None else [str(c) for c in df.columns]
-        current=self.currentText().strip(); wanted=[""]+list(dict.fromkeys(columns))
-        if [self.itemText(i) for i in range(self.count())] != wanted:
-            self.blockSignals(True); self.clear(); self.addItems(wanted)
-            if current in wanted: self.setCurrentIndex(wanted.index(current))
-            self.blockSignals(False)
+        columns=list(dict.fromkeys(map(str,columns))); selected=[x for x in self._selected_fields if x in columns]
+        if [self.itemText(i) for i in range(self.count())] != columns:
+            self.blockSignals(True); self.clear(); self.addItems(columns); self.blockSignals(False)
+        self._selected_fields=selected; self._sync_display()
+    def set_selected_fields(self,fields):
+        cols=[] if self.window() is None or getattr(self.window(),"data_engine",None).df is None else [str(c) for c in self.window().data_engine.df.columns]
+        self.sync_fields(cols); vals=[str(x) for x in fields if str(x) in cols]
+        self._selected_fields=vals[-1:] if not self.multi else list(dict.fromkeys(vals)); self._sync_display()
+    def setCurrentText(self,text):
+        vals=[x.strip() for x in str(text).split(",") if x.strip()]
+        self.set_selected_fields(vals)
+    def _toggle_from_popup(self,index):
+        if index < 0:return
+        field=self.itemText(index)
+        if not field:return
+        if self.multi:
+            if field in self._selected_fields: self._selected_fields.remove(field)
+            else: self._selected_fields.append(field)
+        else:
+            self._selected_fields=[field]
+        self._sync_display(); self.fieldsChanged.emit(self.selected_fields())
     def showPopup(self): self.sync_fields(); super().showPopup()
     def dragEnterEvent(self,event):
         event.acceptProposedAction() if event.mimeData().hasText() and event.mimeData().text().strip() else event.ignore()
@@ -94,7 +118,14 @@ class FieldDropComboBox(QComboBox):
         field=event.mimeData().text().strip() if event.mimeData().hasText() else ""
         w=self.window(); df=getattr(getattr(w,"data_engine",None),"df",None)
         if field and df is not None and field in df.columns:
-            self.sync_fields([str(c) for c in df.columns]); self.setCurrentIndex(self.findText(field)); self.fieldDropped.emit(field); event.setDropAction(Qt.DropAction.CopyAction); event.accept()
+            self.sync_fields([str(c) for c in df.columns])
+            add=bool(QApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier)
+            if self.multi and (add or field not in self._selected_fields):
+                if not add: self._selected_fields=[]
+                if field not in self._selected_fields:self._selected_fields.append(field)
+            else:
+                self._selected_fields=[field]
+            self._sync_display(); self.fieldDropped.emit(field); self.fieldsChanged.emit(self.selected_fields()); event.setDropAction(Qt.DropAction.CopyAction); event.accept()
         else: event.ignore()
 
 
@@ -429,10 +460,12 @@ class MainWindow(QMainWindow):
         self.mark_aggregations = {"Color":"sum","Size":"sum","Text":"count","Detail":"count","Tooltip":"count"}
         self.table_agent_memory = []
         self.presentation_agent_memory = []
+        self.plot_agent_memory = []
         self.last_share_package_path = ""
         self.last_presentation_path = ""
         self.compute_mode = "CPU"
         self.compute_info = ComputeBackend.detect()
+        self._recorded_agent_evidence_ids = set()
         self.agent_tool_registry = default_registry()
         self.analysis_recipe = AnalysisRecipe()
         self.agent_console = AgentRunConsole()
@@ -474,19 +507,19 @@ class MainWindow(QMainWindow):
         marks_config = [("Color", "🎨"), ("Size", "📏"), ("Text", "🔤"), ("Detail", "🔍"), ("Tooltip", "💬")]
         for mark_name, icon in marks_config:
             self.marks_layout.addWidget(QLabel(f"{icon} {mark_name}:"))
-            combo = FieldDropComboBox()
+            combo = FieldDropComboBox(multi=(mark_name != "Size"))
             combo.setMinimumWidth(100)
-            combo.setToolTip(f"Marks → {mark_name}: choose a field or drag a field here from Data Management.")
+            combo.setToolTip(f"Marks → {mark_name}: drag a field here. Multiple fields are supported for Color/Text/Detail/Tooltip; Size accepts one field. Hold Shift while dragging to add to Color instead of replacing it.")
             combo.fieldDropped.connect(lambda field, mn=mark_name: self.assign_mark_field(mn, field))
+            combo.fieldsChanged.connect(lambda _fields, _mn=mark_name: self._mark_fields_changed(_mn))
             combo.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             combo.customContextMenuRequested.connect(lambda pos, mn=mark_name: self.show_mark_context_menu(pos, mn))
             self.marks_layout.addWidget(combo)
             self.marks_widgets[mark_name] = combo
-            combo.currentTextChanged.connect(lambda _text, _mn=mark_name: self.update_plot())
 
         self.marks_layout.addWidget(QLabel("📊 Chart Type:"))
         self.chart_combo = QComboBox()
-        self.chart_combo.addItems(["auto", "horizontal_bar", "vertical_bar", "stacked_bar", "line_discrete", "line_continuous", "area", "dual_axis", "scatter", "histogram", "box", "density", "symbol_map", "filled_map", "gantt", "bullet", "heatmap", "highlight_table", "waterfall", "pareto", "donut", "bump", "sankey", "treemap", "crosstab"])
+        self.chart_combo.addItems(["auto", "horizontal_bar", "vertical_bar", "stacked_bar", "line_discrete", "line_continuous", "area", "dual_axis", "scatter", "histogram", "box", "density", "symbol_map", "filled_map", "gantt", "bullet", "heatmap", "highlight_table", "waterfall", "pareto", "pie", "donut", "bump", "sankey", "treemap", "crosstab"])
         self.chart_combo.currentTextChanged.connect(lambda _text: self.update_plot())
         self.marks_layout.addWidget(self.chart_combo)
         self.layout.addLayout(self.marks_layout)
@@ -495,6 +528,8 @@ class MainWindow(QMainWindow):
         self.fig = Figure(figsize=(10, 6), dpi=100)
         self.ax = self.fig.add_subplot(111)
         self.canvas = FigureCanvas(self.fig)
+        self.canvas.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.canvas.customContextMenuRequested.connect(self.show_plot_context_menu)
         self.layout.addWidget(self.canvas)
 
         # 4. Right Side Panels
@@ -671,12 +706,19 @@ class MainWindow(QMainWindow):
         self.mark_aggregations[mark_name]=value
         self.update_plot()
 
+    def _mark_fields_changed(self, mark_name):
+        self._record_view_change(); self.status.showMessage(f"Marks → {mark_name}: {', '.join(self.marks_widgets[mark_name].selected_fields()) or 'none'}"); self.update_plot()
+
     def assign_mark_field(self, mark_name, col):
         combo=self.marks_widgets.get(mark_name); df=self.data_engine.df
         if combo is None or df is None or col not in df.columns: return False
-        combo.sync_fields([str(c) for c in df.columns]); idx=combo.findText(str(col))
-        if idx < 0: combo.addItem(str(col)); idx=combo.findText(str(col))
-        combo.blockSignals(True); combo.setCurrentIndex(idx); combo.blockSignals(False)
+        current=combo.selected_fields(); add=False
+        # A Shift-modified drag is handled inside the widget. A normal drag replaces
+        # the field for Size and replaces the Color/Text/Detail/Tooltip set unless the
+        # target widget already contains that field. This mirrors Tableau's default
+        # replace behavior while permitting explicit multi-field addition.
+        if combo.multi and col in current: return True
+        combo.set_selected_fields(current+[col] if combo.multi and current and col in current else [col])
         self._record_view_change(); self.status.showMessage(f"{col} assigned to Marks → {mark_name}."); self.update_plot(); return True
 
     def mark_drop(self, event, mark_name):
@@ -995,11 +1037,30 @@ class MainWindow(QMainWindow):
             self.theme_manager.apply_theme(color.name())
 
     def on_compute_mode_changed(self, mode):
-        info=ComputeBackend.resolve(mode); self.compute_mode=mode if info.gpu_available or mode=="CPU" else "CPU"
-        if self.compute_mode != mode: self.compute_combo.blockSignals(True); self.compute_combo.setCurrentText("CPU"); self.compute_combo.blockSignals(False)
+        info = ComputeBackend.resolve(mode, runtime_validate=True)
+        # CPU+GPU is an opportunistic policy: keep the user's requested policy even
+        # when the current runtime must execute on CPU. GPU is a strict request and
+        # therefore returns to CPU when CUDA cannot be safely validated.
+        if mode == "CPU+GPU":
+            self.compute_mode = mode
+        elif mode == "GPU" and not info.gpu_available:
+            self.compute_mode = "CPU"
+            self.compute_combo.blockSignals(True); self.compute_combo.setCurrentText("CPU"); self.compute_combo.blockSignals(False)
+        else:
+            self.compute_mode = mode
+        self.compute_info = info
         self.status.showMessage(info.message)
-        if mode in {"GPU","CPU+GPU"} and not info.gpu_available:
-            QMessageBox.warning(self,"GPU Not Found","A CUDA-capable GPU was not detected. The application will use CPU mode safely.\n\nInstall a compatible PyTorch CUDA build if GPU execution is required.")
+        if mode in {"GPU", "CPU+GPU"} and not info.gpu_available:
+            hardware = "NVIDIA hardware was detected." if info.hardware_gpu_detected else "No NVIDIA GPU was detected by nvidia-smi."
+            details = "\n".join(info.diagnostics[-5:]) if info.diagnostics else "No additional diagnostics were returned."
+            QMessageBox.warning(
+                self, "GPU Execution Unavailable",
+                f"{hardware}\n\n{info.message}\n\n"
+                f"PyTorch: {info.torch_version or 'not available'} | CUDA build: {info.cuda_version or 'CPU-only/unknown'}\n"
+                f"GPU: {info.gpu_name or 'unknown'} | VRAM: {(f'{info.vram_total_gb:.2f} GB' if info.vram_total_gb is not None else 'unknown')}\n\n"
+                f"Diagnostics:\n{details}\n\n"
+                "The application will not force an unsafe CUDA execution. CPU+GPU remains safe and opportunistic."
+            )
     def run_ai_agent_question_analysis(self):
         if self.data_engine.df is None: QMessageBox.warning(self,"Question → Analysis","Load data first."); return
         q,ok=QInputDialog.getMultiLineText(self,"AI Agent Question → Analysis","Describe the data-science question:")
@@ -1059,6 +1120,7 @@ class MainWindow(QMainWindow):
                     self.sheets_list.addItem(sheet_name)
                 self.refresh_data_management()
                 self.populate_marks_combos()
+                self._sync_all_mark_fields()
                 self.status.showMessage(f"Loaded {filepath}")
                 self.update_plot()
             except Exception as e:
@@ -1417,21 +1479,48 @@ class MainWindow(QMainWindow):
         if self.data_engine.df is None:
             QMessageBox.warning(self, "No Data", "Load data first."); return
         target_analysis = recommend_targets_and_features(self.data_engine.df)
-        target = target_override or target_analysis.get("suggested_target") or self.data_engine.df.columns[-1]
+        suggested = target_analysis.get("suggested_target") or (self.data_engine.df.columns[-1] if len(self.data_engine.df.columns) else None)
+        target = target_override or suggested
+
+        # Professional automatic target validation gate: the agent proposes, explains,
+        # flags ambiguity, and asks the human to confirm before any model is trained.
+        if target_override is None:
+            d=QDialog(self); d.setWindowTitle("Automatic Target Validation & Feature Review"); d.resize(1000,700); root=QVBoxLayout(d)
+            root.addWidget(QLabel("The Master Agent has inspected the dataset. Review the proposed target and flagged feature relationships before model training."))
+            form=QFormLayout(); target_box=QComboBox(); target_box.addItems([x["column"] for x in target_analysis.get("target_candidates",[])])
+            if suggested: target_box.setCurrentText(str(suggested))
+            form.addRow("Proposed target",target_box); root.addLayout(form)
+            cand=QTableWidget(); candidates=target_analysis.get("target_candidates",[])[:12]; cand.setRowCount(len(candidates)); cand.setColumnCount(5); cand.setHorizontalHeaderLabels(["Candidate","Score","dtype","Missing %","Reasons"])
+            for i,x in enumerate(candidates):
+                vals=[x.get("column"),x.get("score"),x.get("dtype"),x.get("missing_pct"),"; ".join(x.get("reasons",[]))]
+                for j,v in enumerate(vals): cand.setItem(i,j,QTableWidgetItem(str(v)))
+            cand.resizeColumnsToContents(); root.addWidget(QLabel("Target candidates")); root.addWidget(cand,1)
+            warnings=target_analysis.get("warnings",[])
+            red=target_analysis.get("redundancy_pairs",[])
+            msg=QTextEdit(); msg.setReadOnly(True); msg.setPlainText(("Warnings / ambiguity:\n"+"\n".join("• "+w for w in warnings)) if warnings else "No high-severity target/feature ambiguity was detected by the automatic screening.")
+            if red:
+                msg.append("\n\nPotentially redundant or mathematically related numeric fields:\n"+"\n".join(f"• {x['columns']}: {x['type']} (r={x['correlation']}) — {x['recommendation']}" for x in red[:20]))
+            root.addWidget(msg,1)
+            note=QLabel("Important: correlation or a mathematical relationship cannot determine causal/temporal direction. A human must resolve whether a related field is a legitimate predictor or future/derived information.")
+            note.setWordWrap(True); root.addWidget(note)
+            bb=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel); bb.button(QDialogButtonBox.StandardButton.Ok).setText("Approve Target & Continue"); root.addWidget(bb)
+            bb.accepted.connect(d.accept); bb.rejected.connect(d.reject)
+            if d.exec()!=QDialog.DialogCode.Accepted:return
+            target=target_box.currentText()
         if feature_override: target_analysis["approved_features"] = list(feature_override)
         gate = self.leakage_gate.evaluate(self.data_engine.df, target=target)
         self.agent_ds_state = {
-            "messages": [HumanMessage(content="Master Agent: analyze this dataset and choose ML or DL.")],
+            "messages": [HumanMessage(content="Master Agent: analyze this dataset and choose ML or DL." )],
             "approved_steps": [], "rejected_steps": [], "user_approved": False,
             "dataframe": self.data_engine.df.copy(), "api_key": config.DEFAULT_API_KEY,
             "model_name": self.agent_ds_state.get("model_name", config.ALL_LLM_MODELS[0]),
             "target": target, "target_analysis": target_analysis, "feature_candidates": target_analysis.get("suggested_features", []),
             "compute_mode": self.compute_mode, "leakage_gate": gate, "max_steps": 20, "abort_requested": False, "dataset_card": DatasetCardBuilder.build(self.data_engine.df),
-            "memory": [],
-            "human_approval_evidence": [], "abort_requested": False,
+            "memory": [], "human_approval_evidence": [], "evidence_ids": [],
         }
         gate_evidence = EvidenceObjectProxy.from_dict(gate, "Scientific/Data Leakage Gate")
         self._add_evidence(gate_evidence)
+        self.agent_ds_state["evidence_ids"] = [gate_evidence.get("evidence_id")]
         if gate.get("status") == "blocked":
             box = QMessageBox(self); box.setIcon(QMessageBox.Icon.Warning)
             box.setWindowTitle("Scientific/Data Leakage Gate")
@@ -1443,8 +1532,8 @@ class MainWindow(QMainWindow):
                 self.status.showMessage("Agent run cancelled by Scientific/Data Leakage Gate."); return
             approval = HumanApprovalEvidence.create("Scientific/Data Leakage Gate", "approved", "User explicitly acknowledged the gate and allowed the analysis to continue.")
             self._add_evidence(approval); self.agent_ds_state["human_approval_evidence"].append(approval)
-        self.agent_console.clear(); self.agent_console.log("Master Agent","route","started",f"Target candidate: {target}; compute mode: {self.compute_mode}")
-        self.analysis_recipe.add("agent_start",{"target":target,"compute_mode":self.compute_mode})
+        self.agent_console.clear(); self.agent_console.log("Master Agent","target_validation","approved",f"Target: {target}; compute mode: {self.compute_mode}")
+        self.analysis_recipe.add("agent_start",{"target":target,"compute_mode_requested":self.compute_mode,"compute_info":self.compute_info.to_dict() if hasattr(self.compute_info, "to_dict") else getattr(self.compute_info, "__dict__", {}),"target_validation":target_analysis})
         self.agent_worker = AgentWorker(agent_ds_app, self.agent_ds_state)
         self.agent_worker.step_ready.connect(self.on_agent_step_ready)
         self.agent_worker.finished.connect(self.on_agent_finished)
@@ -1453,6 +1542,19 @@ class MainWindow(QMainWindow):
 
     def on_agent_step_ready(self, step_text):
         summary = step_text or self.agent_ds_state.get("stage_summary", "Awaiting your approval.")
+        # Agent Why and Agent Self-Check are first-class evidence objects. Record
+        # them before the human gate so approval is attached to the exact proposal.
+        why = self.agent_ds_state.get("why_evidence")
+        if isinstance(why, dict) and why.get("evidence_id") not in self._recorded_agent_evidence_ids:
+            self._add_evidence(why); self._recorded_agent_evidence_ids.add(why.get("evidence_id"))
+            self.agent_console.log("Agent", "why", "evidence", json.dumps(why.get("data", {}), default=str), evidence_id=why.get("evidence_id"))
+        self_check = self.agent_ds_state.get("self_check")
+        if isinstance(self_check, dict):
+            eid = f"selfcheck-{abs(hash(json.dumps(self_check, sort_keys=True, default=str))) % 10**12}"
+            if eid not in self._recorded_agent_evidence_ids:
+                evidence = {"evidence_id": eid, "kind": "agent_self_check", "title": f"Agent Self-Check: {self.agent_ds_state.get('current_step','step')}", "status": self_check.get("status", "review"), "data": self_check, "parent_ids": [why.get("evidence_id")] if isinstance(why, dict) and why.get("evidence_id") else []}
+                self._add_evidence(evidence); self._recorded_agent_evidence_ids.add(eid)
+                self.agent_console.log("Agent", "self_check", self_check.get("status", "review"), "Pre-approval self-check recorded.", evidence_id=eid)
         self.agent_console.log("Master Agent", self.agent_ds_state.get("current_step","unknown"), "approval_required", summary)
         # Optional accessible voice channel: set DSP_VOICE_APPROVAL=1. Keyboard/mouse remains the default.
         voice_intent = None
@@ -1511,6 +1613,12 @@ class MainWindow(QMainWindow):
                     self.experiment_records.append({"experiment": f"Agent run {len(self.experiment_records)+1}", "agent": bundle.get("agent"), "model": bundle.get("best_model"), "task": bundle.get("task"), "metrics": bundle.get("best_metrics", {}), "dataset_fingerprint": self.agent_ds_state.get("dataset_card",{}).get("fingerprint"), "route": self.agent_ds_state.get("route"), "step_index": self.agent_ds_state.get("step_index")})
                     card = ModelCardBuilder.build(bundle, self.agent_ds_state.get("dataset_card"), self.agent_ds_state.get("leakage_gate"))
                     self.model_cards.append(card); self._add_evidence({"evidence_id": f"modelcard-{bundle.get('agent','model')}-{len(self.model_cards)}", "kind":"model_card", "title":f"{bundle.get('agent','Model')} Model Card", "data":card, "parent_ids":[]})
+                    # Register the professional evaluation stack as separate evidence nodes
+                    # so Report/Presentation/Publication can distinguish raw metrics from diagnostics.
+                    for kind, title, payload in (("professional_evaluation", "Professional Model Evaluation", bundle.get("evaluation")), ("feature_stability", "Feature Stability Analysis", bundle.get("feature_stability")), ("temporal_availability", "Temporal Availability Matrix", bundle.get("temporal_availability")), ("counterfactual_leakage", "Counterfactual Leakage Test", bundle.get("counterfactual_leakage")), ("model_diagnosis", "Automatic Model Diagnosis", bundle.get("model_diagnosis"))):
+                        if payload:
+                            eid = f"{kind}-{bundle.get('agent','model')}-{len(self.evidence_records)+1}"
+                            self._add_evidence({"evidence_id": eid, "kind": kind, "title": f"{title}: {bundle.get('agent','Model')}", "data": payload, "parent_ids": []})
                     model = bundle.get("model_object")
                     if model is not None:
                         try:
@@ -1524,25 +1632,53 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "Agent Error", error_msg); self.status.showMessage("Agent error.")
 
     def run_ai_agent_plot(self):
-        from agent.graph_plot import run_plot_agent
+        from agent.graph_plot import agent_plot_app
         ml = self.agent_ds_state.get("ml_results"); dl = self.agent_ds_state.get("dl_results")
+        if self.data_engine.df is None:
+            QMessageBox.warning(self, "No Data", "Load a dataset before running AI Agent Plot."); return
         if not ml and not dl:
-            QMessageBox.warning(self, "No AI Results", "Run Agent Data Scientist first so ML/DL results are available."); return
-        result = run_plot_agent(self.data_engine.df, ml, dl, self.agent_ds_state.get("target"), self.chart_combo.currentText())
-        self.agent_ds_state["plot_results"] = result
+            QMessageBox.warning(self, "No AI Results", "Run Agent Data Scientist first so the plotting agent has model evidence. It can still analyze the dataset, but the model-comparison panel will be absent.")
+        state={"dataframe":self.data_engine.df.copy(),"ml_results":ml,"dl_results":dl,"target":self.agent_ds_state.get("target"),"memory":getattr(self,"plot_agent_memory",[])}
+        try:
+            result=agent_plot_app.invoke(state,config={"configurable":{"thread_id":"agent-plot"}})
+        except Exception as exc:
+            QMessageBox.critical(self,"Agent Plot",f"Plot agent failed: {exc}"); return
+        self.plot_agent_memory=result.get("memory",[])
+        self.agent_ds_state["plot_results"]=result
         if result.get("status") != "ok":
-            QMessageBox.warning(self, "Agent Plot", result.get("message", "Plot failed.")); return
-        fig = result.get("figure")
-        if fig is not None:
-            try:
-                html = fig.to_html(include_plotlyjs="cdn", full_html=True)
-                path, _ = QFileDialog.getSaveFileName(self, "Save AI Agent Plot", "AI_Agent_Plot.html", "HTML Files (*.html)")
-                if path:
-                    Path(path).write_text(html, encoding="utf-8")
-                    QMessageBox.information(self, "Agent Plot", f"Interactive plot saved to {path}")
-            except Exception as exc:
-                QMessageBox.information(self, "Agent Plot", str(result.get("summary", "Plot prepared.")) + f"\n\n{exc}")
-        self.status.showMessage(result.get("summary", "Agent Plot completed."))
+            QMessageBox.warning(self,"Agent Plot",result.get("message",result.get("summary","Plot planning failed."))); return
+        plots=result.get("plots",[])
+        dlg=QDialog(self); dlg.setWindowTitle("AI Agent Plot — Data-Driven Analytical Visualizations"); dlg.resize(1100,720); root=QVBoxLayout(dlg)
+        root.addWidget(QLabel(result.get("summary","Agent Plot completed.")))
+        tabs=QTabWidget(); root.addWidget(tabs,1)
+        for i,plot in enumerate(plots):
+            page=QWidget(); lay=QVBoxLayout(page); meta=QTextEdit(); meta.setReadOnly(True)
+            meta.setPlainText(f"{plot.get('title','Plot')}\n\nFields: {', '.join(map(str,plot.get('fields',[])))}\n\nWhy this plot was selected:\n{plot.get('rationale','')}\n\nFindings:\n"+"\n".join('• '+x for x in plot.get('insights',[])))
+            lay.addWidget(meta)
+            if plot.get("figure_json"):
+                try:
+                    import plotly.io as pio
+                    html=pio.to_html(pio.from_json(plot["figure_json"]),include_plotlyjs="cdn",full_html=True)
+                    preview=QTextEdit(); preview.setReadOnly(True); preview.setPlainText("Interactive Plotly visualization generated. Use Save All Plots to export the complete interactive set.\n\n"+html[:1200]+"...")
+                    lay.addWidget(preview,1)
+                except Exception: pass
+            tabs.addTab(page, plot.get("title",f"Plot {i+1}"))
+        buttons=QHBoxLayout(); save=QPushButton("Save All Interactive Plots")
+        def save_all():
+            path,_=QFileDialog.getSaveFileName(dlg,"Save AI Agent Plots","AI_Agent_Plots.html","HTML (*.html)")
+            if not path:return
+            parts=["<html><head><title>AI Agent Plot</title></head><body>"]
+            for plot in plots:
+                if plot.get("figure_json"):
+                    try:
+                        import plotly.io as pio
+                        parts.append(f"<h2>{plot.get('title','Plot')}</h2><p>{plot.get('rationale','')}</p>")
+                        parts.append(pio.to_html(pio.from_json(plot["figure_json"]),include_plotlyjs="cdn",full_html=False))
+                    except Exception: pass
+            parts.append("</body></html>"); Path(path).write_text("\n".join(parts),encoding="utf-8")
+            self.status.showMessage(f"AI Agent Plot set saved to {path}")
+        save.clicked.connect(save_all); buttons.addWidget(save); close=QPushButton("Close"); close.clicked.connect(dlg.accept); buttons.addWidget(close); root.addLayout(buttons); dlg.exec()
+        self.status.showMessage(result.get("summary","Agent Plot completed."))
 
     def run_ai_report(self):
         if not (self.agent_ds_state.get("ml_results") or self.agent_ds_state.get("dl_results")):
@@ -1556,11 +1692,21 @@ class MainWindow(QMainWindow):
             "ML Agent": report_safe(self.agent_ds_state.get("ml_results")),
             "DL Agent": report_safe(self.agent_ds_state.get("dl_results")),
             "Plot Agent": report_safe(self.agent_ds_state.get("plot_results")),
+            "data_visualizations": report_safe(self.agent_ds_state.get("plot_results")),
+            "target_feature_analysis": self.agent_ds_state.get("target_analysis", {}),
             "approved_steps": self.agent_ds_state.get("approved_steps", []),
             "rejected_steps": self.agent_ds_state.get("rejected_steps", []),
             "dataset_card": self.agent_ds_state.get("dataset_card"),
             "leakage_gate": self.agent_ds_state.get("leakage_gate"),
             "human_approval_evidence": self.agent_ds_state.get("human_approval_evidence", []),
+            "agent_why": [e for e in self.evidence_records if e.get("kind") == "agent_why"],
+            "agent_self_checks": [e for e in self.evidence_records if e.get("kind") == "agent_self_check"],
+            "professional_evaluation": {"ML": (self.agent_ds_state.get("ml_results") or {}).get("evaluation"), "DL": (self.agent_ds_state.get("dl_results") or {}).get("evaluation")},
+            "advanced_diagnostics": {
+                "ML": {k: (self.agent_ds_state.get("ml_results") or {}).get(k) for k in ("feature_stability", "temporal_availability", "counterfactual_leakage", "model_diagnosis")},
+                "DL": {k: (self.agent_ds_state.get("dl_results") or {}).get(k) for k in ("temporal_availability", "model_diagnosis")},
+            },
+            "compute_info": self.compute_info.to_dict() if hasattr(self.compute_info, "to_dict") else getattr(self.compute_info, "__dict__", {}),
             "agent_evaluation": AgentEvaluation.evaluate(self.agent_ds_state),
             "evidence_dag": self.evidence_dag.to_dict(),
         }
@@ -1624,7 +1770,7 @@ class MainWindow(QMainWindow):
                 exec(compile(tree,"<Python Macro>","exec"),env); value=env.get("result")
         output=buffer.getvalue()
         if isinstance(value,pd.DataFrame):
-            self.data_engine.set_active_dataframe(value); self.refresh_data_management(); self.populate_marks_combos(); self.update_plot(); output += "\n\nDataFrame result loaded into active analysis:\n"+value.head(30).to_string(index=False)
+            self.data_engine.set_active_dataframe(value); self.refresh_data_management(); self.populate_marks_combos(); self._sync_all_mark_fields(); self.update_plot(); output += "\n\nDataFrame result loaded into active analysis:\n"+value.head(30).to_string(index=False)
         elif value is not None: output += "\n"+str(value)
         return output.strip() or "Macro executed successfully (no printed/result output)."
 
@@ -1756,7 +1902,7 @@ class MainWindow(QMainWindow):
 
     def on_table_agent_finished(self,result,dialog):
         self.table_agent_memory=result.get("memory",[]); df=result.get("dataframe");
-        if isinstance(df,pd.DataFrame): self.data_engine.set_active_dataframe(df); self.refresh_data_management(); self.populate_marks_combos(); self.update_plot()
+        if isinstance(df,pd.DataFrame): self.data_engine.set_active_dataframe(df); self.refresh_data_management(); self.populate_marks_combos(); self._sync_all_mark_fields(); self.update_plot()
         if result.get("status")=="complete": self.status.showMessage(result.get("summary","Table created.")); dialog.accept()
         else: QMessageBox.critical(self,"Table Creation Agent",result.get("error","Agent failed."))
 
@@ -1766,7 +1912,7 @@ class MainWindow(QMainWindow):
         path,_=QFileDialog.getSaveFileName(self,"Save Streamlit Presentation","DataScienceStudioPro_Presentation.py","Python (*.py)")
         if not path:return
         from agent.graph_presentation import agent_presentation_app
-        state={"report_evidence":evidence,"report_text":self.agent_report_state.get("report_text",""),"memory":getattr(self,"presentation_agent_memory",[]),"output_path":path,"title":"Data Science Studio Pro — Analysis Presentation"}
+        state={"report_evidence":evidence,"report_text":self.agent_report_state.get("report_text",""),"plot_results":self.agent_ds_state.get("plot_results",{}),"memory":getattr(self,"presentation_agent_memory",[]),"output_path":path,"title":"Data Science Studio Pro — Analysis Presentation"}
         self.presentation_agent_worker=SimpleGraphWorker(agent_presentation_app,state,{"configurable":{"thread_id":"presentation"}}); self.presentation_agent_worker.finished.connect(self.on_presentation_agent_finished); self.presentation_agent_worker.error.connect(lambda e:QMessageBox.critical(self,"Presentation Agent",e)); self.presentation_agent_worker.start(); self.status.showMessage("AI Agent Presentation is generating the Streamlit application…")
 
     def on_presentation_agent_finished(self,result):
@@ -1777,6 +1923,47 @@ class MainWindow(QMainWindow):
     # ============================================================
     # SHARING
     # ============================================================
+    def show_plot_context_menu(self, pos):
+        menu=QMenu(self)
+        menu.addAction("Format Plot…", self.format_plot_dialog)
+        menu.addSeparator()
+        menu.addAction("Save PNG", lambda:self.export_plot_format("png"))
+        menu.addAction("Save JPG", lambda:self.export_plot_format("jpg"))
+        menu.addAction("Save PDF", lambda:self.export_plot_format("pdf"))
+        menu.exec(self.canvas.mapToGlobal(pos))
+
+    def format_plot_dialog(self):
+        d=QDialog(self); d.setWindowTitle("Plot Formatting and Export"); d.resize(520,460); l=QVBoxLayout(d); form=QFormLayout()
+        title=QLineEdit(self.ax.get_title()); xlabel=QLineEdit(self.ax.get_xlabel()); ylabel=QLineEdit(self.ax.get_ylabel()); size=QSpinBox(); size.setRange(6,32); size.setValue(11)
+        font_btn=QPushButton("Choose font…"); title_color=QPushButton("Choose…"); axis_color=QPushButton("Choose…"); grid=QCheckBox("Show grid"); grid.setChecked(any(line.get_visible() for line in self.ax.get_xgridlines()))
+        form.addRow("Plot title",title); form.addRow("X-axis title",xlabel); form.addRow("Y-axis title",ylabel); form.addRow("Font",font_btn); form.addRow("Font size",size); form.addRow("Title / text color",title_color); form.addRow("Axis color",axis_color); form.addRow("Grid",grid); l.addLayout(form)
+        colors={"title":None,"axis":None}; chosen_font={"font":self.ax.title.get_fontproperties().get_name()}
+        def choose_font():
+            f,ok=QFontDialog.getFont(QFont(chosen_font["font"],size.value()),d,"Plot Font")
+            if ok: chosen_font["font"]=f.family(); size.setValue(f.pointSize())
+        font_btn.clicked.connect(choose_font)
+        title_color.clicked.connect(lambda: colors.__setitem__("title",QColorDialog.getColor()))
+        axis_color.clicked.connect(lambda: colors.__setitem__("axis",QColorDialog.getColor()))
+        bb=QDialogButtonBox(QDialogButtonBox.StandardButton.Apply|QDialogButtonBox.StandardButton.Cancel); l.addWidget(bb)
+        def apply():
+            title_kwargs={"fontsize":size.value(),"fontname":chosen_font["font"]}
+            if colors["title"] is not None and colors["title"].isValid(): title_kwargs["color"]=colors["title"].name()
+            self.ax.set_title(title.text(),**title_kwargs)
+            self.ax.set_xlabel(xlabel.text(),fontsize=size.value(),fontname=chosen_font["font"]); self.ax.set_ylabel(ylabel.text(),fontsize=size.value(),fontname=chosen_font["font"])
+            for label in self.ax.get_xticklabels()+self.ax.get_yticklabels(): label.set_fontname(chosen_font["font"]); label.set_fontsize(size.value())
+            if colors["axis"] and colors["axis"].isValid():
+                c=colors["axis"].name(); self.ax.tick_params(axis="both",colors=c); [sp.set_color(c) for sp in self.ax.spines.values()]
+            self.ax.grid(grid.isChecked(),alpha=.25); self.canvas.draw_idle(); self.status.showMessage("Plot formatting applied.")
+        bb.button(QDialogButtonBox.StandardButton.Apply).clicked.connect(apply); bb.rejected.connect(d.reject); d.exec()
+
+    def export_plot_format(self, fmt):
+        filters={"png":"PNG Files (*.png)","jpg":"JPEG Files (*.jpg *.jpeg)","pdf":"PDF Files (*.pdf)"}; path,_=QFileDialog.getSaveFileName(self,f"Save Plot as {fmt.upper()}",f"plot.{fmt}",filters[fmt])
+        if not path:return
+        try:
+            self.fig.savefig(path,dpi=300,bbox_inches="tight",format=fmt)
+            self.status.showMessage(f"Plot exported to {path}")
+        except Exception as exc: QMessageBox.critical(self,"Plot Export",str(exc))
+
     def export_png(self):
         filepath, _ = QFileDialog.getSaveFileName(self, "Export PNG", "", "PNG Files (*.png)")
         if filepath:
@@ -2179,9 +2366,17 @@ class MainWindow(QMainWindow):
     # ============================================================
     # PLOT UPDATING
     # ============================================================
-    def _mark_value(self, name):
-        combo = self.marks_widgets.get(name); value = combo.currentText().strip() if combo else ""
-        return value if value and self.data_engine.df is not None and value in self.data_engine.df.columns else None
+    def _mark_values(self, name):
+        combo=self.marks_widgets.get(name)
+        if combo is None or self.data_engine.df is None:return []
+        combo.sync_fields([str(c) for c in self.data_engine.df.columns])
+        return [x for x in combo.selected_fields() if x in self.data_engine.df.columns]
+    def _mark_value(self,name):
+        vals=self._mark_values(name); return vals[0] if vals else None
+
+    def _sync_all_mark_fields(self):
+        cols=[] if self.data_engine.df is None else [str(c) for c in self.data_engine.df.columns]
+        for combo in getattr(self,"marks_widgets",{}).values(): combo.sync_fields(cols)
 
     def update_plot(self):
         self.ax.clear()
@@ -2191,7 +2386,8 @@ class MainWindow(QMainWindow):
         rows=[x for x in self.viz_engine.parse_shelf(self.rows_input.text()) if x in df.columns]
         cols=[x for x in self.viz_engine.parse_shelf(self.cols_input.text()) if x in df.columns]
         chart=self.chart_combo.currentText()
-        color_col=self._mark_value("Color"); size_col=self._mark_value("Size"); text_col=self._mark_value("Text"); detail_col=self._mark_value("Detail"); tooltip_col=self._mark_value("Tooltip")
+        color_cols=self._mark_values("Color"); size_cols=self._mark_values("Size"); text_cols=self._mark_values("Text"); detail_cols=self._mark_values("Detail"); tooltip_cols=self._mark_values("Tooltip")
+        color_col=color_cols[0] if color_cols else None; size_col=size_cols[0] if size_cols else None; text_col=text_cols[0] if text_cols else None; detail_col=detail_cols[0] if detail_cols else None; tooltip_col=tooltip_cols[0] if tooltip_cols else None
         if not rows and not cols:
             self.ax.text(.5,.5,"Drag fields to Rows and Columns to begin",ha="center",va="center"); self.canvas.draw(); return
         try:
@@ -2206,13 +2402,16 @@ class MainWindow(QMainWindow):
             # mark fields become aggregated measures. Text/Tooltip are carried through
             # as representative values when they are not already grouped.
             group_dims=list(base_dims)
-            for mark in ("Color","Detail"):
-                field=self._mark_value(mark)
-                if field and field not in group_dims:
-                    group_dims.append(field)
+            # Tableau semantics: Detail always increases granularity; Color only
+            # increases granularity for discrete/categorical fields. Numeric Color
+            # remains a continuous encoding and must not also be grouped.
+            for field in detail_cols:
+                if field not in group_dims: group_dims.append(field)
+            for field in color_cols:
+                if field not in group_dims and not pd.api.types.is_numeric_dtype(df[field]): group_dims.append(field)
             mark_numeric=[]
-            for field in (color_col,size_col,text_col,tooltip_col):
-                if field and field in df.columns and pd.api.types.is_numeric_dtype(df[field]):
+            for field in (color_cols + size_cols + text_cols + tooltip_cols):
+                if field and field in df.columns and pd.api.types.is_numeric_dtype(df[field]) and field not in group_dims:
                     mark_numeric.append(field)
             measures=list(dict.fromkeys(numeric_shelf + mark_numeric))
 
@@ -2244,6 +2443,15 @@ class MainWindow(QMainWindow):
                     work=work.merge(extras,on=key,how="left")
                 else:
                     for field in carry_fields: work[field]=df[field].dropna().iloc[0] if df[field].notna().any() else ""
+
+            # Multiple categorical Color fields are represented as a combined
+            # Tableau-style color dimension; this avoids asking matplotlib for
+            # several incompatible color encodings at once.
+            categorical_color_fields=[f for f in color_cols if f in work.columns and not pd.api.types.is_numeric_dtype(df[f])]
+            if len(categorical_color_fields)>1:
+                work["__dsp_color__"]=work[categorical_color_fields].astype(str).agg(" | ".join,axis=1); color_col="__dsp_color__"
+            elif categorical_color_fields:
+                color_col=categorical_color_fields[0]
 
             if chart=="auto":
                 chart="vertical_bar" if any(c in cols for c in numeric_shelf) else "horizontal_bar"
@@ -2308,15 +2516,17 @@ class MainWindow(QMainWindow):
                 else: bars=self.ax.bar(labels,work[primary],width=self._bar_sizes(work,size_col)); self.ax.set_ylabel(primary); self.ax.set_xlabel(label_col or "Columns"); self.ax.tick_params(axis="x",rotation=45)
                 self._apply_bar_colors(bars,work,color_col)
 
-            # Text mark: annotate each displayed mark with the selected field.
-            if text_col and text_col in work.columns:
+            # Text/Label mark: multiple fields are concatenated for each mark.
+            active_text=[f for f in text_cols if f in work.columns]
+            if active_text:
                 for i,(_,r) in enumerate(work.iterrows()):
                     try:
-                        value=r.get(text_col,"")
-                        self.ax.annotate(str(value),(i,r[primary]),fontsize=8)
+                        value=" | ".join(f"{f}: {r.get(f,'')}" for f in active_text)
+                        yv=r[primary] if primary in r else 0
+                        self.ax.annotate(str(value),(i,yv),fontsize=8)
                     except Exception: pass
             self.ax.set_title(f"{primary} by {', '.join(base_dims) or 'Records'}")
-            self._install_hover_handler(work,color_col,tooltip_col,size_col,rows,cols)
+            self._install_hover_handler(work,color_col,tooltip_cols,size_col,rows,cols)
         except Exception as exc:
             self.ax.text(.5,.5,f"Plot error: {exc}",ha="center",va="center")
         self.fig.subplots_adjust(left=.10,right=.97,bottom=.18,top=.90); self.canvas.draw()
@@ -2342,7 +2552,7 @@ class MainWindow(QMainWindow):
             categories = {v:i for i,v in enumerate(pd.unique(vals))}; cmap=plt.get_cmap("tab10"); n=max(1,len(categories)-1)
             for b, v in zip(bars, vals): b.set_color(cmap(categories[v]/n if n else 0))
 
-    def _install_hover_handler(self, plot_df, color_col, tooltip_col, size_col, rows=None, cols=None):
+    def _install_hover_handler(self, plot_df, color_col, tooltip_cols, size_col, rows=None, cols=None):
         if hasattr(self, "_hover_cid") and self._hover_cid is not None:
             try: self.canvas.mpl_disconnect(self._hover_cid)
             except Exception: pass
@@ -2373,7 +2583,8 @@ class MainWindow(QMainWindow):
                 except Exception: pass
                 if hit_index is not None and hit_index < len(plot_df):
                     row = plot_df.iloc[hit_index]
-                    text = "<br>".join(f"{c}: {row[c]}" for c in plot_df.columns if c in ({tooltip_col} if tooltip_col else set()) or c in (rows or []) or c in (cols or []))
+                    tipset=set(tooltip_cols or [])
+                    text = "<br>".join(f"{c}: {row[c]}" for c in plot_df.columns if c in tipset or c in (rows or []) or c in (cols or []))
                     if annotation["obj"] is None:
                         annotation["obj"] = self.ax.annotate(text, xy=(event.xdata, event.ydata), xytext=(12, 12),
                             textcoords="offset points", bbox=dict(boxstyle="round", fc="white", alpha=.9), arrowprops=dict(arrowstyle="->"))

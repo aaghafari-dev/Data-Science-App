@@ -25,7 +25,38 @@ def _target_candidate_score(df: pd.DataFrame, c: str) -> tuple[float, list[str]]
         score -= 5; reasons.append("constant/invalid")
     if _ID_PATTERNS.search(str(c)):
         score -= 4; reasons.append("identifier-like")
+    if s.isna().all():
+        score -= 8; reasons.append("all values missing")
     return score, reasons
+
+
+def _pairwise_redundancy(df: pd.DataFrame, max_cols: int = 40) -> list[dict[str, Any]]:
+    nums = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c]) and df[c].notna().sum() >= 5][:max_cols]
+    out: list[dict[str, Any]] = []
+    if len(nums) < 2: return out
+    sample = df[nums].dropna(how="all").head(10000)
+    for i, a in enumerate(nums):
+        av = pd.to_numeric(sample[a], errors="coerce")
+        for b in nums[i+1:]:
+            bv = pd.to_numeric(sample[b], errors="coerce")
+            valid = av.notna() & bv.notna()
+            if valid.sum() < 5: continue
+            x, y = av[valid].to_numpy(float), bv[valid].to_numpy(float)
+            corr = float(np.corrcoef(x, y)[0,1]) if np.std(x) > 0 and np.std(y) > 0 else 1.0
+            if abs(corr) >= .995:
+                out.append({"columns":[str(a),str(b)],"type":"near_duplicate_or_linear_transform","correlation":round(corr,6),
+                            "recommendation":"Keep one representative unless both variables have distinct documented meaning."})
+                continue
+            # Detect simple square/cubic-style deterministic transforms without assuming causality.
+            for power in (2, 3):
+                xp = np.sign(x) * (np.abs(x) ** power)
+                if np.std(xp) > 0 and np.std(y) > 0:
+                    r = float(np.corrcoef(xp, y)[0,1])
+                    if abs(r) >= .995:
+                        out.append({"columns":[str(a),str(b)],"type":f"possible_power_{power}_transform","correlation":round(r,6),
+                                    "recommendation":"Flag as mathematically redundant; do not automatically remove because temporal/causal direction is unknown."})
+                        break
+    return out
 
 
 def recommend_targets_and_features(df: pd.DataFrame) -> dict[str, Any]:
@@ -38,32 +69,39 @@ def recommend_targets_and_features(df: pd.DataFrame) -> dict[str, Any]:
                         "missing_pct": round(float(df[c].isna().mean()*100), 2),
                         "unique": int(df[c].nunique(dropna=True)), "dtype": str(df[c].dtype)})
     targets.sort(key=lambda x: x["score"], reverse=True)
-    chosen = targets[0]["column"] if targets else None
-    features = []
+    suggested = targets[0]["column"] if targets else None
+    redundancy = _pairwise_redundancy(df)
     warnings = []
+    for pair in redundancy:
+        warnings.append(f"{pair['columns']}: {pair['type']} detected; target/feature direction is not inferable from correlation alone.")
+
+    features = []
     for c in df.columns:
-        if c == chosen: continue
-        s = df[c]
-        reasons = []
-        score = 0.0
-        if _ID_PATTERNS.search(str(c)):
-            score -= 4; reasons.append("identifier-like")
-        if _FUTURE_PATTERNS.search(str(c)):
-            score -= 3; reasons.append("possible future/post-outcome information")
-        if s.isna().all():
-            score -= 6; reasons.append("all values missing")
-        if s.nunique(dropna=True) <= 1:
-            score -= 5; reasons.append("constant")
+        if c == suggested: continue
+        s = df[c]; reasons = []; score = 0.0
+        if _ID_PATTERNS.search(str(c)): score -= 4; reasons.append("identifier-like")
+        if _FUTURE_PATTERNS.search(str(c)): score -= 3; reasons.append("possible future/post-outcome information")
+        if s.isna().all(): score -= 8; reasons.append("all values missing")
+        if s.nunique(dropna=True) <= 1: score -= 5; reasons.append("constant")
         if pd.api.types.is_numeric_dtype(s): score += 1; reasons.append("numeric")
-        else: score += 0.5; reasons.append("usable categorical/object")
-        if chosen is not None and pd.api.types.is_numeric_dtype(s) and pd.api.types.is_numeric_dtype(df[chosen]):
-            a = pd.to_numeric(s, errors="coerce"); b = pd.to_numeric(df[chosen], errors="coerce")
-            valid = a.notna() & b.notna()
+        else: score += .5; reasons.append("usable categorical/object")
+        # Target leakage/redundancy check.
+        if suggested and pd.api.types.is_numeric_dtype(s) and pd.api.types.is_numeric_dtype(df[suggested]):
+            a = pd.to_numeric(s, errors="coerce"); b = pd.to_numeric(df[suggested], errors="coerce"); valid = a.notna() & b.notna()
             if valid.sum() >= 5:
                 corr = float(a[valid].corr(b[valid]))
                 if np.isfinite(corr) and abs(corr) >= .995:
-                    score -= 3; warnings.append(f"{c}: near-perfect target correlation may indicate leakage or duplication.")
+                    score -= 5; reasons.append("near-perfect association with proposed target; possible leakage/duplicate")
+                for power in (2,3):
+                    ap = np.sign(a[valid].to_numpy(float)) * (np.abs(a[valid].to_numpy(float)) ** power)
+                    y = b[valid].to_numpy(float)
+                    if np.std(ap) > 0 and np.std(y) > 0 and abs(float(np.corrcoef(ap,y)[0,1])) >= .995:
+                        score -= 5; reasons.append(f"possible power-{power} transform of target; direction ambiguous")
+                        break
         features.append({"column": str(c), "score": round(score,3), "reasons": reasons, "dtype": str(s.dtype)})
     features.sort(key=lambda x: x["score"], reverse=True)
-    return {"target_candidates": targets, "feature_candidates": features, "suggested_target": chosen,
-            "suggested_features": [x["column"] for x in features if x["score"] > -1], "warnings": sorted(set(warnings))}
+    return {"target_candidates": targets, "feature_candidates": features,
+            "suggested_target": suggested,
+            "suggested_features": [x["column"] for x in features if x["score"] > -1],
+            "redundancy_pairs": redundancy,
+            "warnings": sorted(set(warnings))}

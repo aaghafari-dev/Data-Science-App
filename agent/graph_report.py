@@ -41,6 +41,14 @@ def _evidence_text(state):
 def _fallback_report(evidence):
     master=evidence.get("master_route","not recorded"); target=evidence.get("target","not recorded")
     ml=evidence.get("ML Agent") or {}; dl=evidence.get("DL Agent") or {}; plot=evidence.get("Plot Agent") or {}
+    diagnostics=[]
+    for label, bundle in (("ML", ml), ("DL", dl)):
+        if isinstance(bundle, dict):
+            diagnostics.append(f"{label} professional evaluation: {json.dumps(bundle.get('evaluation', {}), default=str)[:7000]}")
+            diagnostics.append(f"{label} feature stability: {json.dumps(bundle.get('feature_stability', {}), default=str)[:5000]}")
+            diagnostics.append(f"{label} temporal availability: {json.dumps(bundle.get('temporal_availability', {}), default=str)[:5000]}")
+            diagnostics.append(f"{label} counterfactual leakage: {json.dumps(bundle.get('counterfactual_leakage', {}), default=str)[:5000]}")
+            diagnostics.append(f"{label} automatic diagnosis: {json.dumps(bundle.get('model_diagnosis', {}), default=str)[:5000]}")
     lines=[
         "Data Science Studio Pro — AI Agent Report", f"Generated: {datetime.now():%Y-%m-%d %H:%M}",
         "", "Executive Summary",
@@ -48,15 +56,23 @@ def _fallback_report(evidence):
         "", "Dataset and Governance",
         f"Dataset Card: {json.dumps(evidence.get('dataset_card',{}),default=str)[:5000]}",
         f"Scientific/Data Leakage Gate: {json.dumps(evidence.get('leakage_gate',{}),default=str)[:5000]}",
+        "", "Analytical Visualizations",
+        f"The Agent Plot selected {len((plot.get('plots') or [])) if isinstance(plot, dict) else 0} data-driven visualizations. The selected views and their rationales are recorded below.",
+        *[f"- {item.get('title')} | fields={item.get('fields')} | rationale={item.get('rationale')} | findings={item.get('insights', [])}" for item in (plot.get('plots', []) if isinstance(plot, dict) else [])],
         "", "Model Results",
         f"ML Agent: {ml.get('summary','No ML result recorded.')}",
         f"DL Agent: {dl.get('summary','No DL result recorded.')}",
         f"Plot Agent: {plot.get('summary','No Plot result recorded.')}",
+        "", "Professional Evaluation and Diagnostics",
+        *diagnostics,
         "", "Interpretation and Advice",
         "The recorded metrics should be interpreted together with the uncertainty, data-quality and leakage checks. Before deployment, review the model card, confirm the evaluation population and validate that no future information entered the predictors.",
         "", "Human Oversight and Reproducibility",
         f"Human approval evidence: {len(evidence.get('human_approval_evidence',[]))} recorded gate(s).",
         "Limitations: this report does not claim causal relationships, generalisation beyond the evaluated data, or production readiness unless those claims are explicitly supported by evidence.",
+        "", "Agent Decision Evidence",
+        json.dumps(evidence.get("agent_why", []), default=str, indent=2)[:10000],
+        json.dumps(evidence.get("agent_self_checks", []), default=str, indent=2)[:10000],
         "", "Evidence appendix", json.dumps(evidence,default=str,indent=2)[:20000]
     ]
     return "\n".join(lines)

@@ -1,222 +1,330 @@
-# Data Science Studio Pro — Project Structure (V18.3)
+# Data Science Studio Pro — Project Structure V18.6
 
-## 1. Product principle
+## Engineering objective
 
-Data Science Studio Pro is a professional Windows/Python data-analysis environment combining a Tableau-style analytical surface with governed LangGraph agents, reproducibility, statistical analysis and practical MLOps.
+A professional Windows/PyQt6 data-science desktop environment for high-level analytical users. The application combines a Tableau-like analytical surface, governed ML/DL agents, LangGraph orchestration, professional model evaluation, leakage diagnostics, reproducible artifacts, statistical analysis, data-quality controls, and evidence-bound reporting.
 
-**GUI rule:** the approved main GUI geometry and layout are preserved. The central plot, Rows/Columns shelves, Marks panel, right-side Data Management/Filters/Extra Insight docks and existing toolbar placement are not redesigned. New behavior is implemented behind the existing controls and through menus/dialogs/services.
+**GUI rule:** the existing GUI geometry, menus, shelves, Marks panel, dialogs and layout are preserved. V18.6 adds backend intelligence and improves existing behavior without redesigning the main interface.
 
-## 2. Interaction architecture
+## V18.6 focus
 
-### Marks
-Five existing controls remain in their current location. Each is a real field assignment control:
+1. **Professional ML/DL evaluation with uncertainty and robustness testing** rather than a single holdout metric.
+2. **Hardware-aware compute selection** with independent NVIDIA hardware, PyTorch CUDA, architecture and runtime validation.
+3. **Plan → Critic → Execute** control inside the Master Agent.
+4. **Feature Stability Analysis** using repeated resampling and permutation importance.
+5. **Temporal Availability Matrix** for feature availability over time.
+6. **Counterfactual Leakage Test** for suspicious features.
+7. **Automatic Model Diagnosis** from evaluation and leakage evidence.
+8. **Agent Self-Check** before every human approval gate.
+9. **Agent Why** as a first-class evidence object; only decision-level rationale is stored, not private chain-of-thought.
+10. **Evidence-first integration** so Report, Presentation, Model Cards, Publication and Sharing can consume the same evidence objects.
 
-- Color — categorical grouping or quantitative color encoding.
-- Size — quantitative visual size.
-- Text — visible annotation.
-- Detail — additional grouping/granularity.
-- Tooltip — hover-only context.
-
-Each selector has two valid input paths: live dropdown and drag/drop from Data Management. The selector synchronizes from the active DataFrame when opened, so it cannot show an empty/stale field list after a sheet switch.
-
-### Filters
-The Filters dock is a real drop target. Numeric, categorical and datetime columns are accepted and converted into persistent filter specifications.
-
-### PDF tables
-File → Open PDF extracts tables page-by-page. A selection dialog shows every detected table, page and dimensions, with Select All / Clear All and preview. Selected tables become named sheets in Loaded Sheets. The first imported sheet is explicitly selected so the active working table is unambiguous.
-
-### Macro workspace
-Macro → Python / SQL opens a multi-run workspace inspired by the V16 implementation: starter library + editor + execution output/history on the same page. Run Current does not close the dialog; users can edit and execute several commands sequentially.
-
-## 3. Core data model
-
-Stage 1 is deliberately limited to the four foundational analytical dtypes:
-
-- `int64`
-- `float64`
-- `object`
-- `datetime`
-
-Semantic roles such as Identifier, Target, Measure, Ordinal and Geographic are a second-stage layer. This prevents the basic pandas dtype engine from being mixed with higher-level interpretation.
-
-All-missing predictor columns are removed before sklearn imputation, eliminating the warning/error path caused by columns such as `Daltonic` that contain no observed values.
-
-## 4. Professional services
+## Top-level structure
 
 ```text
-services/
-├── agent_memory.py              # bounded role-specific working memory
-├── agent_tools.py               # typed/versioned agent tool registry
-├── analysis_recipe.py           # reproducible action recipe
-├── analysis_state.py            # explicit project lifecycle state machine
-├── agent_console.py             # agent node/status/evidence event log
-├── artifacts.py                 # artifact-first registry and lineage
-├── target_feature_selection.py  # target/feature candidate analysis
-├── compute_backend.py           # CPU / CPU+GPU / GPU policy and detection
-├── pdf_tables.py                # PDF table extraction and identity
-├── data_contracts.py            # schema contracts + drift
-├── split_wizard.py              # leakage-aware splits
-├── error_analysis.py            # model error diagnostics
-├── statistical_analysis.py      # statistical workflow engine
-├── duckdb_workspace.py          # SQL analytical workspace
-├── notebook_export.py           # reproducible notebook export
-├── monitoring.py                # data/model drift diagnostics
-├── publication_package.py       # publication bundle
-├── sharing.py                   # privacy-aware collaboration bundle
-├── macro_library.py             # 100 Python/SQL starter commands
-├── model_preprocessing.py       # dtype-safe sklearn preprocessing
-└── ...
+app/
+├── main.py
+├── config.py
+├── requirements.txt
+├── requirements-optional.txt
+├── README.md
+├── PROMPT.txt
+├── prompt.txt
+├── Project Structure.md
+├── Mermaid Diagram.mmd
+├── Mermaid Diagram.png
+├── Dockerfile
+├── dvc.yaml
+├── .github/workflows/ci.yml
+├── assets/
+├── core/
+│   ├── data_engine.py
+│   ├── viz_engine.py
+│   ├── tableau_views.py
+│   ├── sheet_manager.py
+│   ├── sheet_manager_V3.py
+│   └── theme_manager.py
+├── agent/
+│   ├── graph_ds.py                 # Master Agent / LangGraph plan-critic-execute control
+│   ├── graph_ml.py                 # ML Agent + professional evaluation/diagnostics
+│   ├── graph_dl.py                 # DL Agent + hardware-aware compute/evaluation
+│   ├── graph_plot.py               # LangGraph Plot Planner + Renderer
+│   ├── graph_report.py             # Evidence-bound Report Agent
+│   ├── graph_presentation.py       # Streamlit Presentation Agent
+│   ├── graph_table_creation.py     # Web/API table acquisition Agent
+│   ├── graph_question_analysis.py  # Question → Analysis Agent
+│   ├── local_llm.py
+│   ├── prompts.py
+│   ├── tools.py
+│   └── voice_layer.py
+├── services/
+│   ├── agent_quality.py            # Evaluation, stability, temporal, leakage, diagnosis, Why, self-check
+│   ├── compute_backend.py          # Hardware + PyTorch CUDA + runtime validation
+│   ├── target_feature_selection.py
+│   ├── model_preprocessing.py
+│   ├── split_wizard.py
+│   ├── error_analysis.py
+│   ├── statistical_analysis.py
+│   ├── duckdb_workspace.py
+│   ├── pdf_tables.py
+│   ├── macro_library.py
+│   ├── agent_tools.py
+│   ├── agent_console.py
+│   ├── agent_memory.py
+│   ├── analysis_recipe.py
+│   ├── analysis_state.py
+│   ├── artifacts.py
+│   ├── governance.py
+│   ├── experiment_registry.py
+│   ├── model_registry.py
+│   ├── monitoring.py
+│   ├── lineage.py
+│   ├── explainability.py
+│   ├── profiling.py
+│   ├── privacy.py
+│   ├── notebook_export.py
+│   ├── publication_package.py
+│   ├── sharing.py
+│   ├── large_data.py
+│   ├── api_service.py
+│   └── extension_api.py
+└── tests/
+    ├── test_agent_quality.py
+    ├── test_viz_engine.py
+    ├── test_data_engine.py
+    ├── test_services.py
+    ├── test_governance.py
+    ├── test_professional_features.py
+    ├── test_v182_features.py
+    ├── test_v183_features.py
+    ├── test_v184_features.py
+    └── test_agent_imports.py
 ```
 
-## 5. Agent architecture
+## Agent architecture
+
+The application still has exactly three core data-science agents:
 
 ```text
-                         LangGraph
-                            │
-                  ┌─────────┴─────────┐
-                  │                   │
-             Master Agent       Specialist Agents
-                  │                   │
-          ┌───────┴───────┐     ┌────┴─────┐
-          ▼               ▼     ▼          ▼
-       ML Agent         DL Agent Plot     Report
-          │               │                 │
-          └───────┬───────┘                 ▼
-                  ▼                    Presentation
-             Human Gates               (Streamlit)
+                    Master Agent
+                         │
+              Plan → Critic → Self-Check
+                         │
+                  Human Approval
+                    /          \
+                  ML            DL
+                  │              │
+          professional      professional
+           evaluation        evaluation
+                  \              /
+                   diagnostics
+                         │
+                  Agent Plot
+                         │
+                  Agent Report
+                         │
+               Agent Presentation
 ```
 
-LangGraph is the orchestration engine: nodes, transitions, state and checkpoints/memory. Benchmarking is a separate evaluation layer and never becomes a second orchestrator.
+LangGraph remains the orchestration engine. Agent Benchmarking evaluates behavior around the graph; it does not replace LangGraph.
 
-## 6. Agent memory model
+## Master Agent: Plan → Critic → Execute
 
-Each agent has bounded role-specific working memory. Memory stores reusable context, not secrets.
+Each executable milestone now has an explicit plan containing:
 
-- **Master Agent:** prior route decisions, approved/rejected milestones, target-analysis context and run status.
-- **ML Agent:** preprocessing decisions, task type, model/evaluation context and previous model-analysis summaries.
-- **DL Agent:** compute backend, architecture/training context and prior DL results.
-- **Question → Analysis Agent:** questions, target candidates, feature candidates and warnings.
-- **Table Creation Agent:** source/method/success summaries; API keys are excluded.
-- **Plot Agent:** model-result structures and plotting choices.
-- **Report Agent:** evidence keys and report-generation context.
-- **Presentation Agent:** report/presentation generation context and prior output metadata.
+- objective
+- inputs
+- expected output
+- risk
+- route/target
+- tool budget
+- human-gate requirement
 
-Memory is bounded to avoid unbounded context growth and is deliberately separated by agent role.
+The Critic checks:
 
-## 7. Target and feature selection
+- target exists and is valid
+- leakage gate is not blocked
+- predictors are available
+- tool budget is bounded
+- human approval is required
 
-The Question → Analysis workflow first proposes candidates using:
+Only then is the proposal exposed for approval. A rejection creates a revised proposal; it is never silently converted into approval.
 
-- column-name signals
-- dtype
-- cardinality
-- missingness
-- constant/invalid detection
-- identifier-like patterns
-- possible future/post-outcome names
-- numeric target correlation signals
+## Agent Self-Check
 
-The system **does not silently choose a target for a consequential model run**. It presents candidate targets/features to the human, who can approve or change them. The Master Agent then receives the approved target and feature context.
+Before every approval, the graph produces an `agent_self_check` object. It records:
 
-## 8. Typed Agent Tool Registry
+- plan completeness
+- evidence binding
+- bounded action/tool budget
+- human-gate status
+- blocking reasons
 
-`TypedAgentToolRegistry` is an explicit allow-list. Every tool declares:
+The self-check is stored in the Evidence DAG and Agent Run Console.
 
-- name
-- version
-- description
-- input schema
-- capabilities
-- handler
+## Agent Why
 
-Agents cannot invent arbitrary tool calls. This provides a controlled extension point without creating an unrestricted plugin execution layer.
+`AgentWhyEvidence` creates a first-class `agent_why` evidence object containing:
 
-## 9. Analysis Recipe
+- agent
+- decision
+- concise decision-level rationale
+- evidence references
+- alternatives considered
+- constraints
+- disclosure that private chain-of-thought is not stored
 
-Every important action can be recorded as a reproducible recipe step:
+This allows a professional user to understand **why the agent selected an action** without exposing or depending on hidden chain-of-thought.
 
-```text
-Load → Quality → Contract → Filters → Transformations → Split → Model → Evaluate → Plot → Report → Share
-```
+## Professional ML/DL evaluation with uncertainty and robustness testing
 
-Each step can reference artifact and evidence IDs.
+### ML
 
-## 10. Analysis State Machine
+Each candidate model now records:
 
-```text
-DATA_LOADED
-  ↓
-QUALITY_CHECKED
-  ↓
-CONTRACT_VALIDATED
-  ↓
-ANALYSIS_READY
-  ↓
-MODEL_READY
-  ↓
-MODEL_VALIDATED
-  ↓
-REPORT_READY
-  ↓
-PRESENTATION_READY
-  ↓
-SHAREABLE
-  ↓
-MONITORED
-```
+- held-out metrics
+- baseline comparison
+- repeated cross-validation
+- mean/std/min/max CV behavior
+- train/test generalization gap
+- bootstrap uncertainty where supported
+- classification calibration diagnostics
+- existing error analysis
 
-Invalid transitions are rejected rather than silently accepted.
+The model is still selected using the declared primary held-out metric, but the user receives the complete evaluation bundle rather than a single number.
 
-## 11. Artifact-first architecture
+### DL
 
-Dataset, model, plot, report, presentation, recipe and governance objects become explicit artifacts with:
+The DL agent records:
 
-- artifact ID
-- version
-- parent artifacts
-- metadata
-- creation time
+- held-out metrics
+- baseline comparison
+- compute backend
+- runtime diagnostics
+- temporal availability evidence
+- model diagnosis
+- safe CUDA/CPU fallback information
 
-This allows evidence and reproducibility to reference concrete objects rather than loose strings.
+The current bounded neural path intentionally remains conservative for a 2 GB-class GPU.
 
-## 12. Compute policy
+## Advanced diagnostics
 
-The existing toolbar position is preserved. A compact compute selector provides:
+### Feature Stability Analysis
 
-- CPU
-- CPU+GPU
-- GPU
+Repeated resampling + permutation importance estimates whether feature importance remains positive and consistent across runs. It is diagnostic evidence, not a reason to automatically delete a feature.
 
-PyTorch CUDA is detected at runtime. If GPU is requested but no CUDA-capable GPU is found, the user receives an explicit message and the application safely falls back to CPU. CPU+GPU uses CPU-oriented ML components and GPU-capable DL components where available.
+### Temporal Availability Matrix
 
-## 13. PDF table workflow
+A detected date/time field is divided into chronological quantile buckets. The service records feature non-missing availability for each period and flags features that appear materially later in the timeline.
 
-```text
-Open PDF
-   ↓
-Extract page/table candidates
-   ↓
-Select All / Clear All / Preview
-   ↓
-Select desired tables
-   ↓
-Loaded Sheets
-   ↓
-Select active sheet
-   ↓
-Data Management / Rows / Columns / Marks / Filters
-```
+A late-appearing feature is **not automatically declared leakage**. The user must verify whether it was available at prediction time.
 
-Every imported sheet retains source PDF, page and table-index metadata.
+### Counterfactual Leakage Test
 
-## 14. Macro workflow
+For suspicious features, the service trains the same model protocol with the feature removed and compares performance on the same holdout split. A material performance drop is recorded as model dependence and triggers provenance review; it is not treated as causal proof of leakage.
 
-The 100-command library contains 50 Python/pandas/NumPy/SciPy commands and 50 SQL/DuckDB commands. The editor supports repeated execution without closing the dialog. Output and errors remain on the same page, enabling iterative data exploration.
+### Automatic Model Diagnosis
 
-## 15. Agent Question → Analysis
+The diagnostic layer looks for:
 
-The Question Agent interprets a natural-language data-science question, proposes target and feature candidates, identifies warnings and builds an analysis plan. Human review is required before the plan is handed to the Master Agent.
+- generalization gaps
+- poor calibration
+- unstable feature importance
+- late temporal availability
+- material counterfactual dependence
 
-## 16. Validation
+It returns explicit hypotheses and suggested next checks rather than an opaque quality score.
 
-The project is tested with `pytest` and Python compilation. Optional LangGraph/LLM integration tests may be skipped when optional dependencies are unavailable.
+## Compute backend
+
+`services/compute_backend.py` separates:
+
+1. **Hardware detection** — Windows `nvidia-smi`.
+2. **PyTorch CUDA build detection** — `torch.version.cuda`.
+3. **CUDA availability** — `torch.cuda.is_available()`.
+4. **Architecture compatibility** — `torch.cuda.get_device_capability()` and `get_arch_list()`.
+5. **Runtime validation** — isolated CUDA smoke test in a subprocess.
+6. **VRAM policy** — bounded execution for low-VRAM devices.
+
+Therefore, a system with an NVIDIA GPU but a CPU-only PyTorch build is reported as:
+
+> NVIDIA hardware detected, but PyTorch CUDA is not currently usable.
+
+rather than incorrectly reporting that the physical GPU does not exist.
+
+For an MX250-class 2 GB device, the application treats the GPU as a small accelerator. Large dense tabular tensors and large models are routed to CPU rather than risking CUDA out-of-memory failures.
+
+The three user-facing policies remain:
+
+- **CPU** — CPU execution only.
+- **CPU+GPU** — opportunistic hybrid policy; CPU remains safe when CUDA is unavailable.
+- **GPU** — CUDA is required; if CUDA validation fails, the application refuses unsafe GPU execution and falls back safely.
+
+## Existing V18.4 functionality retained
+
+- Tableau-like Rows/Columns and Marks behavior.
+- Multiple Color/Text/Detail/Tooltip fields; single Size field.
+- Plot formatting context menu and PNG/JPG/PDF export.
+- Pie chart.
+- Automatic target validation and A/A² direction ambiguity detection.
+- AI Agent Plot as a genuine LangGraph planning agent.
+- Evidence-bound Report Agent.
+- Presentation Agent consuming Data Scientist + Plot + Report evidence.
+- Data Contracts and Schema Drift.
+- Leakage-aware Split Wizard.
+- Error Analysis Workspace.
+- Statistical Analysis Wizard.
+- DuckDB analytical workspace.
+- Notebook interoperability.
+- Dataset Cards / Model Cards / Publication Package.
+- Model Monitoring / Drift.
+- Typed Agent Tool Registry.
+- Analysis Recipe / replay foundation.
+- Agent Run Console.
+- Analysis State Machine.
+- Artifact-first architecture.
+- PDF table extraction with explicit active-sheet activation.
+- 100 professional Macro starters.
+- Privacy-aware collaboration sharing.
+- CPU/CPU+GPU/GPU selector.
+
+## New high-level roadmap suggestions
+
+The following are intentionally proposed as the next professional layer rather than silently added to the current release:
+
+1. **Feature Set Challenge** — compare several feature sets under one locked validation protocol.
+2. **Temporal Split Advisor** — automatically test whether a random split is inappropriate for time-dependent data.
+3. **Robustness / Perturbation Suite** — noise, missingness, category perturbation and outlier sensitivity.
+4. **Prediction Interval / Conformal Layer** — uncertainty around individual predictions where assumptions and sample size permit.
+5. **Threshold Optimization Workspace** — classification threshold analysis with business/scientific cost functions.
+6. **Data Slice Discovery** — find subgroups where model error is materially different, with minimum-support controls.
+7. **Model Challenger Protocol** — require a simpler baseline/challenger before promotion.
+8. **Feature Provenance Graph** — link each feature to source column, transformation, availability time and calculation recipe.
+9. **Agent Stopping Criteria** — stop when evidence gain is below a declared threshold instead of using only a step counter.
+10. **Tool Sandbox / Dry Run** — show the exact tool call, estimated cost and affected artifacts before execution.
+11. **Agent Regression Suite** — replay benchmark datasets and compare agent plans, approvals, evidence completeness and failure modes across releases.
+12. **Scientific Assumption Registry** — store explicit assumptions such as stationarity, independence, leakage exclusions and domain constraints.
+
+These are particularly valuable for advanced users because they improve the **quality of the reasoning and evidence**, not merely the number of buttons.
+
+
+## V18.6 additions
+
+- **Compute crash hardening:** CPU+GPU is opportunistic and never formats missing VRAM as a number. NVIDIA hardware detection, PyTorch CUDA availability and runtime validation remain separate facts.
+- **Robustness / Perturbation Agent:** bounded numeric jitter, random missingness and numeric clipping tests are executed against the locked test set and reported as sensitivity evidence.
+- **Prediction uncertainty:** regression receives empirical residual interval diagnostics; classification receives probability-confidence/entropy diagnostics. These are explicitly labeled as uncertainty diagnostics, not guaranteed confidence intervals.
+- **Tool Dry-Run:** every typed tool can be previewed without executing its handler. The preview shows required inputs, budgets, permissions and whether execution would be allowed.
+- **Professional validation:** model evaluation now combines holdout performance, baseline comparison, repeated cross-validation, calibration where applicable, uncertainty, robustness perturbation, feature stability, temporal availability, counterfactual dependence and automatic diagnosis.
+- **Marks drag/drop hardening:** Shift detection uses the application keyboard-modifier state rather than an unavailable `QDropEvent.keyboardModifiers()` method.
+- **Plot formatting hardening:** Matplotlib color arguments are omitted when no valid color was selected; `None` is never passed as an explicit color.
+
+
+### V18.6 agent execution policy
+
+The Master Agent performs deterministic tool dry-runs during planning. A dry-run never executes a tool; it reports required inputs, observed data size, budget status, permissions and whether execution would be allowed.
+
+Every approval proposal has an Agent Why evidence object and an Agent Self-Check bound to that Why object. Specialist-result approvals also bind their self-check to the corresponding specialist Why evidence.
+
+The ML and DL evidence package includes bounded robustness perturbation tests (numeric 1% jitter, random 2% missingness and numeric 1–99% clipping) and prediction uncertainty diagnostics. These are sensitivity diagnostics and are not presented as guarantees of production performance or calibrated probability unless calibration has been validated.
+
+The GUI remains unchanged: no new main-window panels, shelves, menus or layout regions are introduced for these backend capabilities.
