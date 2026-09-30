@@ -1,312 +1,273 @@
-# Data Science Studio Pro — V18.6
+# Data Science Studio Pro 
+Professional desktop data-analysis software for Windows.
 
-Data Science Studio Pro is a professional Windows/PyQt6 analytical environment designed for advanced data-science users. It combines a Tableau-like interactive analytical surface with governed LangGraph agents, professional ML/DL evaluation, leakage diagnostics, reproducibility, evidence management and report/presentation generation.
+## 
 
-## GUI preservation
+strengthens the application around five principles:
 
-**The existing GUI and layout are preserved.** V18.6 changes backend logic and the behavior of existing controls. No main-window redesign is introduced.
+1. **Trust** — do not accept a result merely because code executed successfully.
+2. **Evidence** — important conclusions must be traceable to analytical artifacts.
+3. **Method Selection** — choose methods according to the question, data structure and validation requirements.
+4. **Efficiency** — dry-run tools, estimate resources and avoid unnecessary recomputation.
+5. **Human Control** — every governed Agent Data Scientist stage requires explicit approval.
 
-## What V18.6 adds
+The existing GUI and layout are preserved.
 
-### 1. Professional ML/DL evaluation with uncertainty and robustness testing
+## Major  capabilities
 
-The application no longer treats one holdout R²/accuracy value as the complete model evaluation.
+### Agent Data Scientist
 
-ML candidate models now receive:
-
-- holdout metrics
-- dummy baseline comparison
-- repeated cross-validation
-- CV mean/std/range
-- train-vs-validation generalization gap
-- bootstrap uncertainty where appropriate
-- classification calibration diagnostics
-- existing error analysis
-
-DL records the equivalent held-out/baseline evidence plus hardware/runtime information and diagnostic evidence. The current neural implementation remains deliberately bounded for small-memory GPUs.
-
-### 2. Professional GPU/CPU policy
-
-The Compute selector remains:
-
-- **CPU**
-- **CPU+GPU**
-- **GPU**
-
-The new backend separates four questions that were previously conflated:
-
-```text
-Does Windows see an NVIDIA GPU?
-          ↓
-Does installed PyTorch contain CUDA?
-          ↓
-Can PyTorch initialize that GPU?
-          ↓
-Can a real CUDA operation execute safely?
-```
-
-It also records:
-
-- GPU name
-- VRAM total/free when `nvidia-smi` is available
-- NVIDIA driver version
-- PyTorch version
-- CUDA build version
-- compute capability when available
-- compiled architecture list compatibility
-- runtime smoke-test result
-
-This means an NVIDIA GPU is not incorrectly described as “not found” merely because the Python environment contains a CPU-only PyTorch build or cannot initialize CUDA.
-
-For an MX250 2 GB-class device, the application uses a conservative VRAM budget and can route large neural workloads to CPU rather than risking an out-of-memory crash.
-
-### 3. Plan → Critic → Execute
-
-The Master Agent now follows a governed pattern:
+LangGraph now coordinates:
 
 ```text
 Plan
-  ↓
-Critic
-  ↓
-Agent Self-Check
-  ↓
-Human Approval
-  ↓
-Execute
-  ↓
-Evidence + Result Self-Check
-  ↓
-Human Approval
+ → Critic
+ → Self-Check
+ → Human Approval
+ → Validation
+ → Human Approval
+ → Preprocessing Review
+ → Human Approval
+ → Model Selection Review
+ → Human Approval
+ → Model Execution
+ → Human Approval
+ → Evaluation Review
+ → Human Approval
+ → Robustness Review
+ → Human Approval
+ → Diagnosis Review
+ → Human Approval
+ → Independent Verification
+ → Human Approval
+ → Stop Evaluator
 ```
 
-Rejection causes revision/replanning. There is no automatic approval after a rejection.
+The Master Agent still contains exactly two internal specialist agents:
 
-### 4. Feature Stability Analysis
+- ML Agent
+- DL Agent
 
-Repeated resampling and permutation importance estimate whether important features remain important across different samples. The output includes importance mean, standard deviation and positive-frequency.
+A rejection revises the current stage. Abort terminates safely.
 
-### 5. Temporal Availability Matrix
+### Professional classification analysis
 
-For datasets containing a date/time field, the application produces an availability matrix showing the proportion of non-missing values for features over chronological periods.
+The dedicated workspace implements:
 
-Features that become available much later are flagged for temporal-leakage review.
-
-### 6. Counterfactual Leakage Test
-
-For suspicious features, the same model protocol is run after removing a feature. The resulting performance change measures model dependence and creates evidence for provenance review.
-
-It is intentionally **not** described as causal proof of leakage.
-
-### 7. Automatic Model Diagnosis
-
-The diagnostic engine combines:
-
-- generalization gaps
+- missing-value imputation
+- categorical encoding
+- fold-local scaling
+- optional PCA
+- k-fold validation
+- hyperparameter search
+- locked final test set
+- Logistic Regression
+- SVM
+- Random Forest
+- Decision Tree
+- KNN
+- Naive Bayes
+- Neural Network
+- optional XGBoost
+- optional LightGBM
+- confusion matrix
+- accuracy
+- balanced accuracy
+- precision
+- recall
+- F1
+- ROC-AUC
+- PR-AUC
+- log loss
+- Brier score
 - calibration evidence
-- feature stability
-- temporal availability
-- counterfactual dependence
 
-into explicit diagnostic hypotheses and recommended next checks.
+### Professional regression analysis
 
-### 8. Agent Self-Check
+Methods:
 
-Every approval request now has a machine-generated self-check covering:
+- OLS
+- Ridge
+- Lasso
+- Elastic Net
+- Polynomial Regression
+- SVR
+- Decision Tree
+- Random Forest
+- Gradient Boosting
+- Neural Network
+- optional XGBoost
+- optional LightGBM
 
-- plan completeness
-- evidence binding
-- tool/action budget
-- human approval requirement
-- blocking reasons
+Metrics:
 
-The result is stored in the Evidence DAG.
+- MAE
+- RMSE
+- R²
+- median absolute error
+- mean bias error
+- MAPE where meaningful
 
-### 9. Agent Why — first-class evidence
+### AI Agent Report
 
-The new `agent_why` evidence object stores a concise, auditable explanation of an agent decision:
+The Report Agent combines Agent Data Scientist evidence, Agent Plot visualizations and the selected LLM.
 
-- decision
-- rationale
-- evidence references
-- alternatives considered
-- constraints
+The report includes professional analytical explanations and embeds Plotly visualizations into the PDF when the image-rendering backend is installed.
 
-It does **not** attempt to store private chain-of-thought.
+### AI Agent Presentation
 
-## Agent architecture
-
-The core data-science architecture remains exactly:
-
-```text
-LangGraph
-   ↓
-Master Agent
-   ├── ML Agent
-   └── DL Agent
-```
-
-The Plot, Report, Presentation, Question and Table Creation workflows remain separate specialized LangGraph workflows. They do not change the core Master → ML/DL architecture.
-
-## Advanced analytical flow
+DataFrames are converted into bounded JSON/msgpack-safe evidence summaries before presentation generation. This prevents the previous:
 
 ```text
-Data
-  ↓
-Data Quality + Contract + Target Validation
-  ↓
-Leakage-aware Split
-  ↓
-Master Agent
-  ↓
-Plan → Critic → Self-Check → Human Approval
-  ↓
-ML / DL
-  ↓
-Professional Evaluation
-  ├── baseline
-  ├── repeated CV
-  ├── uncertainty
-  ├── calibration
-  └── error analysis
-  ↓
-Advanced Diagnostics
-  ├── feature stability
-  ├── temporal availability
-  ├── counterfactual leakage
-  └── automatic diagnosis
-  ↓
-Agent Plot
-  ↓
-Evidence-bound Report
-  ↓
-Presentation / Publication / Sharing
+Type is not msgpack serializable: DataFrame
 ```
 
-## Existing professional functionality
+failure.
 
-V18.6 retains V18.4 functionality including:
+### Tableau-like Rows / Columns aggregation
 
-- Tableau-like Rows/Columns/Marks semantics.
-- Multiple Color/Text/Detail/Tooltip fields and single Size field.
-- Data-driven AI Agent Plot with correlation, scatter, category, time-series and distribution views.
-- Professional plot formatting and PNG/JPG/PDF export.
-- Pie chart.
-- Automatic target validation and A/A² relationship ambiguity detection.
-- Data Contracts and Schema Drift.
-- Leakage-aware split wizard.
-- Error Analysis Workspace.
-- Statistical Analysis Wizard.
-- DuckDB workspace.
-- Notebook export.
-- Dataset Cards / Model Cards.
-- Experiment Comparison.
-- Model Monitoring / Drift.
-- Analysis Recipe and replay foundation.
-- Artifact registry and lineage.
-- Evidence DAG.
-- Human approval evidence.
-- Agent Run Console.
-- 100 Python/SQL macro starters.
-- PDF table extraction into separate Loaded Sheets.
-- Privacy-aware collaboration sharing.
-- REST API / Docker / CI skeleton.
+Right-click a field on Rows or Columns to choose:
 
-## Hardware guidance for the MX250 2 GB
+- Automatic
+- Sum
+- Average
+- Count
+- Minimum
+- Maximum
+- Median
+- Count Distinct
+- Remove
 
-The MX250 is a small Pascal-generation laptop GPU. The application therefore treats it as an optional accelerator rather than assuming it can execute every DL workload.
+### Tableau-like Marks
 
-The important distinction is:
+Clear now clears the actual internal field selection.
 
-```text
-GPU physically present
-        ≠
-PyTorch CUDA build installed
-        ≠
-CUDA initialized
-        ≠
-CUDA kernel execution validated
+Categorical Color creates a legend showing the meaning of each color.
+
+### Sheets and Stories
+
+The professional workspace supports:
+
+- New Sheet
+- Duplicate
+- Rename
+- Delete
+- activate a sheet
+- select plotted sheets for a Story
+- reorder story sheets
+- explanatory story text
+- Story preview
+- Story PNG export
+- Story PDF export
+
+### Professional Help Center
+
+Help now includes:
+
+- Quick Start
+- Rows / Columns / Aggregation
+- Marks
+- Classification Analysis
+- Regression Analysis
+- Agent Data Scientist
+- AI Agent Report
+- Sheets and Stories
+- Voice / Accessibility
+- CPU / GPU
+- Troubleshooting
+- Reproducibility
+
+### Voice
+
+Voice is opt-in. Accessibility → Start Voice Command opens a dedicated control panel.
+
+Only unambiguous commands can control an approval gate:
+
+- approve
+- reject
+- pause
+- abort
+
+Ambiguous speech never approves a step.
+
+### Compute
+
+The compute policy distinguishes:
+
+- physical NVIDIA hardware
+- driver availability
+- PyTorch CUDA build
+- architecture compatibility
+- CUDA runtime initialization
+- VRAM/resource limits
+
+CPU+GPU is opportunistic. GPU mode is strict. Low-VRAM devices such as a 2 GB MX250 are protected by bounded execution policies.
+
+## Reproducibility
+
+The application records, where applicable:
+
+- dataset fingerprint
+- data contract
+- target/feature decisions
+- validation protocol
+- model configuration
+- random seeds
+- agent decisions
+- approval evidence
+- artifacts
+- evidence DAG
+- Analysis Recipe
+- model/experiment registry information
+
+The final test partition is not used for model selection or hyperparameter tuning.
+
+## Running
+
+```powershell
+py -3.11 .\main.py
 ```
 
-The application checks these conditions separately.
-
-Current PyTorch packaging is also relevant to legacy Pascal GPUs. PyTorch's current documentation and release notices indicate that published CUDA wheels are changing over time and that Pascal support requires attention to the selected PyTorch/CUDA build. Therefore the application records the exact PyTorch version, CUDA build and device architecture instead of assuming that “CUDA installed” means that the selected Python environment can use the GPU.
-
-## Installation
-
-```bash
-python -m pip install -r requirements.txt
-python main.py
-```
-
-Optional integrations:
-
-```bash
-python -m pip install -r requirements-optional.txt
-```
-
-## Validation
-
-Run:
-
-```bash
-python -m compileall -q .
-pytest -q
-```
-
-The V18.6 development validation completed with:
-
-**28 passed, 1 skipped**
-
-The skipped test is the optional LangGraph/LangChain integration test when those dependencies are unavailable in the validation environment.
-
-Live PyQt6 interaction was not claimed as tested in the headless validation environment.
-
-## Important design principle
-
-The application is **evidence-first**:
-
-> data → quality → contract → target/leakage controls → governed agent plan → human approval → execution → professional evaluation → diagnostics → visualization → report → reproducible sharing
-
-The objective is not simply to automate model training. The objective is to give an advanced data-science user a transparent, reproducible and auditable analytical workflow.
-
-## Next professional extensions
-
-Recommended next-layer capabilities:
-
-1. Feature Set Challenge under one locked validation protocol.
-2. Temporal Split Advisor.
-3. Robustness/Perturbation Suite.
-4. Prediction intervals / conformal prediction where justified.
-5. Classification Threshold Optimization.
-6. Data Slice Discovery with minimum-support controls.
-7. Model Challenger Protocol.
-8. Feature Provenance Graph.
-9. Evidence-based Agent Stopping Criteria.
-10. Tool Sandbox / Dry Run with cost estimates.
-11. Agent Regression Suite.
-12. Scientific Assumption Registry.
-
-These are deliberately framed as extensions because the current release already has a strong governed agent foundation.
 
 
-## V18.6 additions
+Skipped tests are optional integrations when LangGraph/LangChain is not installed in the lightweight validation environment.
 
-- **Compute crash hardening:** CPU+GPU is opportunistic and never formats missing VRAM as a number. NVIDIA hardware detection, PyTorch CUDA availability and runtime validation remain separate facts.
-- **Robustness / Perturbation Agent:** bounded numeric jitter, random missingness and numeric clipping tests are executed against the locked test set and reported as sensitivity evidence.
-- **Prediction uncertainty:** regression receives empirical residual interval diagnostics; classification receives probability-confidence/entropy diagnostics. These are explicitly labeled as uncertainty diagnostics, not guaranteed confidence intervals.
-- **Tool Dry-Run:** every typed tool can be previewed without executing its handler. The preview shows required inputs, budgets, permissions and whether execution would be allowed.
-- **Professional validation:** model evaluation now combines holdout performance, baseline comparison, repeated cross-validation, calibration where applicable, uncertainty, robustness perturbation, feature stability, temporal availability, counterfactual dependence and automatic diagnosis.
-- **Marks drag/drop hardening:** Shift detection uses the application keyboard-modifier state rather than an unavailable `QDropEvent.keyboardModifiers()` method.
-- **Plot formatting hardening:** Matplotlib color arguments are omitted when no valid color was selected; `None` is never passed as an explicit color.
+## Optional packages
 
+For extended functionality consider:
 
-### V18.6 agent execution policy
+- `xgboost`
+- `lightgbm`
+- `kaleido` — Plotly static-image export for professional PDF reports
+- `mlflow`
+- `optuna`
+- `shap`
+- `statsmodels`
+- `ydata-profiling`
 
-The Master Agent performs deterministic tool dry-runs during planning. A dry-run never executes a tool; it reports required inputs, observed data size, budget status, permissions and whether execution would be allowed.
+## Design policy
 
-Every approval proposal has an Agent Why evidence object and an Agent Self-Check bound to that Why object. Specialist-result approvals also bind their self-check to the corresponding specialist Why evidence.
+The application is intended for a high-level data-analysis user. Automation must not replace methodological judgment. The software therefore favors:
 
-The ML and DL evidence package includes bounded robustness perturbation tests (numeric 1% jitter, random 2% missingness and numeric 1–99% clipping) and prediction uncertainty diagnostics. These are sensitivity diagnostics and are not presented as guarantees of production performance or calibrated probability unless calibration has been validated.
+- explicit validation
+- independent verification
+- uncertainty
+- robustness
+- evidence traceability
+- human approval
+- reproducibility
 
-The GUI remains unchanged: no new main-window panels, shelves, menus or layout regions are introduced for these backend capabilities.
+over opaque automatic conclusions.
+
+## Recommended next development priorities
+
+1. Conformal prediction with explicit coverage validation.
+2. Group-aware and temporal nested cross-validation in the dedicated supervised workspaces.
+3. Data-slice discovery with statistical multiplicity controls.
+4. Feature provenance graphs from raw source through transformed model input.
+5. Automatic residual diagnostics and influence analysis.
+6. Experiment-level cost/performance/uncertainty frontiers.
+7. Agent stopping criteria based on information gain rather than only step count.
+8. Parallel execution of independent diagnostics under a governed resource budget.
+9. Deployment simulation: batch inference, latency, memory and drift rehearsal.
+10. Scientific report claim-to-evidence verification before publication export.

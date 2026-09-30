@@ -56,6 +56,7 @@ from services.target_feature_selection import recommend_targets_and_features
 from services.pdf_tables import PDFTableExtractor
 from agent.graph_question_analysis import question_analysis_app
 from services.project_io import build_manifest, save_manifest, load_manifest
+from services.supervised_analysis import ClassificationAnalysisEngine, RegressionAnalysisEngine
 from core.tableau_views import TableauSheet, TableauDashboard, TableauStory
 from langchain_core.messages import HumanMessage
 import config
@@ -82,6 +83,11 @@ class FieldDropComboBox(QComboBox):
         self.setAcceptDrops(True); self.setInsertPolicy(QComboBox.InsertPolicy.NoInsert); self.setEditable(True); self.lineEdit().setReadOnly(True)
         self.activated.connect(self._toggle_from_popup)
     def selected_fields(self): return list(self._selected_fields)
+    def clear_selection(self):
+        self._selected_fields = []
+        self._sync_display()
+        self.fieldsChanged.emit([])
+
     def _display(self): return ", ".join(self._selected_fields)
     def _sync_display(self):
         self.lineEdit().setText(self._display())
@@ -458,6 +464,8 @@ class MainWindow(QMainWindow):
         self.agent_abort_requested = False
         self.hierarchies = {}
         self.mark_aggregations = {"Color":"sum","Size":"sum","Text":"count","Detail":"count","Tooltip":"count"}
+        self.shelf_aggregations = {"Rows": {}, "Columns": {}}
+        self.story_workspace_state = {"sheets": [], "stories": []}
         self.table_agent_memory = []
         self.presentation_agent_memory = []
         self.plot_agent_memory = []
@@ -630,7 +638,7 @@ class MainWindow(QMainWindow):
         if combo is None:
             return
         menu = QMenu(self)
-        menu.addAction("Clear", lambda: (combo.setCurrentIndex(0), self.update_plot()))
+        menu.addAction("Clear", lambda: (combo.clear_selection(), self._record_view_change(), self.update_plot()))
         if mark_name in {"Color", "Size", "Text", "Detail", "Tooltip"}:
             agg_menu = menu.addMenu("Aggregation")
             for label, value in [("Sum", "sum"), ("Average", "mean"), ("Count", "count"), ("Min", "min"), ("Max", "max")]:
@@ -665,18 +673,27 @@ class MainWindow(QMainWindow):
         if not fields:
             menu.addAction("No fields in shelf").setEnabled(False)
         else:
-            remove_menu = menu.addMenu(f"Remove from {shelf_name}")
             for field in fields:
-                remove_menu.addAction(field, lambda f=field, w=widget: self._remove_shelf_field(w, f))
-            drill_menu=menu.addMenu("Drill Down")
-            has_drill=False
-            for field in fields:
-                if any(field in h and h.index(field)<len(h)-1 for h in self.hierarchies.values()):
-                    drill_menu.addAction(field, lambda f=field, w=widget: self.drill_down_field(w,f)); has_drill=True
-            if not has_drill: drill_menu.setEnabled(False)
+                field_menu = menu.addMenu(field)
+                agg_menu = field_menu.addMenu("Aggregation")
+                options = [("Automatic", None), ("Sum", "sum"), ("Average", "mean"), ("Count", "count"), ("Minimum", "min"), ("Maximum", "max"), ("Median", "median"), ("Count Distinct", "nunique")]
+                for label, value in options:
+                    agg_menu.addAction(label, lambda v=value, sn=shelf_name, f=field: self._set_shelf_aggregation(sn, f, v))
+                field_menu.addAction("Remove", lambda f=field, w=widget: self._remove_shelf_field(w, f))
+                if pd.api.types.is_numeric_dtype(self.data_engine.df[field]):
+                    current = self.shelf_aggregations.get(shelf_name, {}).get(field) or "Automatic"
+                    field_menu.setToolTip(f"Current aggregation: {current}")
             menu.addSeparator()
-            menu.addAction("Clear shelf", lambda w=widget: (w.clear(), self.update_plot()))
+            menu.addAction("Clear shelf", lambda w=widget: self._clear_shelf(w, shelf_name))
         menu.exec(widget.mapToGlobal(pos))
+
+    def _set_shelf_aggregation(self, shelf_name, field, value):
+        self.shelf_aggregations.setdefault(shelf_name, {})[field] = value
+        self._record_view_change(); self.update_plot()
+        self.status.showMessage(f"{shelf_name} → {field}: {value or 'Automatic'}")
+
+    def _clear_shelf(self, widget, shelf_name):
+        widget.clear(); self.shelf_aggregations[shelf_name] = {}; self._record_view_change(); self.update_plot()
 
     def _remove_shelf_field(self, widget, field):
         widget.setText(self.viz_engine.remove_from_shelf(widget.text(), field))
@@ -936,10 +953,9 @@ class MainWindow(QMainWindow):
         analysis_menu = menubar.addMenu("Data Analysis")
         analysis_menu.addAction("Descriptive Statistics", lambda: self.show_analysis("Descriptive Statistics"))
         analysis_menu.addAction("Correlation Matrix", lambda: self.show_analysis("Correlation Matrix"))
-        analysis_menu.addAction("Hypothesis Testing", lambda: self.show_analysis("Hypothesis Testing"))
         analysis_menu.addAction("Time Series Analysis", lambda: self.show_analysis("Time Series Analysis"))
-        analysis_menu.addAction("Regression Analysis", lambda: self.show_analysis("Regression Analysis"))
-        analysis_menu.addAction("DuckDB Analytical Workspace", self.show_duckdb_workspace)
+        analysis_menu.addAction("Classification Analysis", self.show_classification_analysis)
+        analysis_menu.addAction("Regression Analysis", self.show_regression_analysis)
 
         ai_menu = menubar.addMenu("AI Agents")
         ai_menu.addAction("Agent Data Scientist", self.run_agent_data_scientist)
@@ -982,11 +998,19 @@ class MainWindow(QMainWindow):
         access_menu.addAction("Stop Agent Run", self.stop_agent_run)
 
         help_menu = menubar.addMenu("Help")
+        help_menu.addAction("Help Center", self.show_help_center)
+        help_menu.addAction("Quick Start Guide", lambda: self.show_help_topic("quickstart"))
         help_menu.addAction("Using Rows, Columns and Marks", lambda: self.show_help_topic("shelves"))
         help_menu.addAction("Filters and Drag-and-Drop", lambda: self.show_help_topic("filters"))
+        help_menu.addAction("Classification Analysis", lambda: self.show_help_topic("classification"))
+        help_menu.addAction("Regression Analysis", lambda: self.show_help_topic("regression"))
         help_menu.addAction("Sheets, Dashboards and Stories", lambda: self.show_help_topic("views"))
         help_menu.addAction("AI Agents and Human Approval", lambda: self.show_help_topic("agents"))
+        help_menu.addAction("Voice and Accessibility", self.show_voice_help)
+        help_menu.addAction("Compute / CPU / GPU Troubleshooting", lambda: self.show_help_topic("compute"))
         help_menu.addAction("Chart Types and Hierarchies", lambda: self.show_help_topic("charts"))
+        help_menu.addAction("Troubleshooting", lambda: self.show_help_topic("troubleshooting"))
+        help_menu.addSeparator()
         help_menu.addAction("About Data Science Studio Pro", lambda: self.show_help_topic("about"))
 
         share_menu = menubar.addMenu("Sharing")
@@ -1555,6 +1579,19 @@ class MainWindow(QMainWindow):
                 evidence = {"evidence_id": eid, "kind": "agent_self_check", "title": f"Agent Self-Check: {self.agent_ds_state.get('current_step','step')}", "status": self_check.get("status", "review"), "data": self_check, "parent_ids": [why.get("evidence_id")] if isinstance(why, dict) and why.get("evidence_id") else []}
                 self._add_evidence(evidence); self._recorded_agent_evidence_ids.add(eid)
                 self.agent_console.log("Agent", "self_check", self_check.get("status", "review"), "Pre-approval self-check recorded.", evidence_id=eid)
+        # Verification gates are also first-class evidence and must be visible before approval.
+        for key, title in (("verification_why", "Agent Verification Why"), ("verification_self_check", "Agent Verification Self-Check")):
+            obj = self.agent_ds_state.get(key)
+            if isinstance(obj, dict):
+                if key == "verification_why" and obj.get("evidence_id") not in self._recorded_agent_evidence_ids:
+                    self._add_evidence(obj); self._recorded_agent_evidence_ids.add(obj.get("evidence_id"))
+                    self.agent_console.log("Agent", "verification_why", "evidence", json.dumps(obj.get("data", {}), default=str), evidence_id=obj.get("evidence_id"))
+                elif key == "verification_self_check":
+                    eid = f"verify-selfcheck-{abs(hash(json.dumps(obj, sort_keys=True, default=str))) % 10**12}"
+                    if eid not in self._recorded_agent_evidence_ids:
+                        evidence={"evidence_id":eid,"kind":"agent_self_check","title":title,"status":obj.get("status","review"),"data":obj,"parent_ids":[self.agent_ds_state.get("verification_why",{}).get("evidence_id")] if isinstance(self.agent_ds_state.get("verification_why"),dict) else []}
+                        self._add_evidence(evidence); self._recorded_agent_evidence_ids.add(eid)
+                        self.agent_console.log("Agent", "verification_self_check", obj.get("status","review"), "Verification self-check recorded.", evidence_id=eid)
         self.agent_console.log("Master Agent", self.agent_ds_state.get("current_step","unknown"), "approval_required", summary)
         # Optional accessible voice channel: set DSP_VOICE_APPROVAL=1. Keyboard/mouse remains the default.
         voice_intent = None
@@ -1615,7 +1652,7 @@ class MainWindow(QMainWindow):
                     self.model_cards.append(card); self._add_evidence({"evidence_id": f"modelcard-{bundle.get('agent','model')}-{len(self.model_cards)}", "kind":"model_card", "title":f"{bundle.get('agent','Model')} Model Card", "data":card, "parent_ids":[]})
                     # Register the professional evaluation stack as separate evidence nodes
                     # so Report/Presentation/Publication can distinguish raw metrics from diagnostics.
-                    for kind, title, payload in (("professional_evaluation", "Professional Model Evaluation", bundle.get("evaluation")), ("feature_stability", "Feature Stability Analysis", bundle.get("feature_stability")), ("temporal_availability", "Temporal Availability Matrix", bundle.get("temporal_availability")), ("counterfactual_leakage", "Counterfactual Leakage Test", bundle.get("counterfactual_leakage")), ("model_diagnosis", "Automatic Model Diagnosis", bundle.get("model_diagnosis"))):
+                    for kind, title, payload in (("professional_evaluation", "Professional Model Evaluation", bundle.get("evaluation")), ("validation_protocol", "Validation Protocol", bundle.get("validation_protocol")), ("validation_audit", "Validation Integrity Audit", bundle.get("validation_audit")), ("feature_stability", "Feature Stability Analysis", bundle.get("feature_stability")), ("feature_set_challenge", "Feature Set Challenge", bundle.get("feature_set_challenge")), ("temporal_availability", "Temporal Availability Matrix", bundle.get("temporal_availability")), ("counterfactual_leakage", "Counterfactual Leakage Test", bundle.get("counterfactual_leakage")), ("model_diagnosis", "Automatic Model Diagnosis", bundle.get("model_diagnosis")), ("feature_provenance", "Feature Provenance", bundle.get("feature_provenance")), ("resource_policy", "Resource Policy", bundle.get("resource_policy"))):
                         if payload:
                             eid = f"{kind}-{bundle.get('agent','model')}-{len(self.evidence_records)+1}"
                             self._add_evidence({"evidence_id": eid, "kind": kind, "title": f"{title}: {bundle.get('agent','Model')}", "data": payload, "parent_ids": []})
@@ -1625,6 +1662,14 @@ class MainWindow(QMainWindow):
                             self.model_registry.register(bundle.get("best_model", bundle.get("agent", "model")), model, bundle.get("best_metrics", {}), {"agent": bundle.get("agent"), "task": bundle.get("task")})
                         except Exception:
                             pass
+            try:
+                from services.evidence_validation import EvidenceValidator
+                validation = EvidenceValidator.validate(self.evidence_records, required_kinds=["professional_evaluation", "model_diagnosis", "model_card"])
+                self.agent_ds_state["evidence_validation"] = validation
+                self._add_evidence({"evidence_id": f"evidence-validation-{len(self.evidence_records)+1}", "kind":"evidence_validation", "title":"Evidence Integrity Validation", "data":validation, "parent_ids":[]})
+                self.analysis_recipe.add("evidence_validation", validation)
+            except Exception as exc:
+                self.agent_console.log("Governance", "evidence_validation", "warning", str(exc))
             self.status.showMessage("Agent Data Scientist finished. ML/DL evidence is ready for Agent Plot and Agent Report.")
         QMessageBox.information(self, "Agent Data Scientist", message)
 
@@ -1684,8 +1729,17 @@ class MainWindow(QMainWindow):
         if not (self.agent_ds_state.get("ml_results") or self.agent_ds_state.get("dl_results")):
             QMessageBox.warning(self, "No Analysis", "Run Agent Data Scientist first."); return
         def report_safe(bundle):
-            if not isinstance(bundle, dict): return bundle
-            return {k: v for k, v in bundle.items() if k not in {"model_object", "figure"}}
+            def safe(v):
+                if isinstance(v, pd.DataFrame):
+                    return {"__type__":"DataFrame","shape":[int(v.shape[0]),int(v.shape[1])],"columns":[str(c) for c in v.columns],"preview":v.head(20).to_dict(orient="records")}
+                if isinstance(v, pd.Series): return v.head(50).tolist()
+                if isinstance(v, dict): return {str(k): safe(x) for k,x in v.items() if k not in {"model_object","figure"}}
+                if isinstance(v, (list,tuple)): return [safe(x) for x in v]
+                if isinstance(v, (np.integer,np.floating)): return v.item()
+                if isinstance(v, (np.ndarray,)): return v.tolist()
+                try: json.dumps(v); return v
+                except Exception: return str(v)
+            return safe(bundle)
         self.agent_report_state["analysis_evidence"] = {
             "master_route": self.agent_ds_state.get("route"),
             "target": self.agent_ds_state.get("target"),
@@ -1822,6 +1876,42 @@ class MainWindow(QMainWindow):
             except Exception as exc: out.setPlainText(json.dumps({"plan":plan,"error":str(exc)},indent=2))
         run.clicked.connect(execute); dlg.exec()
 
+    def _show_supervised_workspace(self, kind):
+        if self.data_engine.df is None:
+            QMessageBox.warning(self, "No Data", "Load data first."); return
+        df=self.data_engine.df; cols=list(df.columns)
+        d=QDialog(self); d.setWindowTitle(f"{kind} Analysis — Professional Workspace"); d.resize(1100,760); root=QVBoxLayout(d)
+        tabs=QTabWidget(); root.addWidget(tabs)
+        setup=QWidget(); sl=QVBoxLayout(setup); form=QFormLayout(); target=QComboBox(); target.addItems(cols); folds=QSpinBox(); folds.setRange(2,10); folds.setValue(5); test=QDoubleSpinBox(); test.setRange(.1,.5); test.setSingleStep(.05); test.setValue(.2); scaling=QComboBox(); scaling.addItems(["standard","minmax","none"]); pca=QCheckBox("Optional PCA (fit inside training folds)"); form.addRow("Target",target); form.addRow("Test fraction",test); form.addRow("CV folds",folds); form.addRow("Scaling",scaling); form.addRow("Dimensionality reduction",pca); sl.addLayout(form)
+        desc=QTextEdit(); desc.setReadOnly(True); desc.setPlainText(("Classification pipeline: missing-value imputation → categorical one-hot encoding → training-fold-only scaling → model/CV/hyperparameter search → locked test evaluation → calibration and class-imbalance metrics → deployment/monitoring evidence." if kind=="Classification" else "Regression pipeline: missing-value imputation → categorical one-hot encoding → training-fold-only scaling → model/CV/hyperparameter search → locked test evaluation → residual/error metrics → uncertainty and deployment/monitoring evidence.")); sl.addWidget(desc)
+        run=QPushButton(f"Run Professional {kind} Analysis"); sl.addWidget(run); tabs.addTab(setup,"1. Setup & Preprocessing")
+        methods_text=QTextEdit(); methods_text.setReadOnly(True); tabs.addTab(methods_text,"2. Methods & Model Selection")
+        eval_text=QTextEdit(); eval_text.setReadOnly(True); tabs.addTab(eval_text,"3. Evaluation & Diagnostics")
+        deploy_text=QTextEdit(); deploy_text.setReadOnly(True); tabs.addTab(deploy_text,"4. Deployment & Monitoring")
+        holder={"result":None}
+        def execute():
+            try:
+                if kind=="Classification": result=ClassificationAnalysisEngine.run(df,target.currentText(),test_size=test.value(),folds=folds.value(),scaling=scaling.currentText(),pca=pca.isChecked())
+                else: result=RegressionAnalysisEngine.run(df,target.currentText(),test_size=test.value(),folds=folds.value(),scaling=scaling.currentText(),pca=pca.isChecked())
+                holder["result"]=result
+                methods_text.setPlainText(json.dumps({"methods":result.get("methods"),"best_model":result.get("best_model"),"selection_metric":result.get("selection_metric"),"validation":result.get("validation")},indent=2,default=str))
+                eval_text.setPlainText(json.dumps({"best_test_metrics":result.get("best_test_metrics"),"preprocessing":result.get("preprocessing"),"class_distribution":result.get("class_distribution")},indent=2,default=str))
+                deploy_text.setPlainText(json.dumps(result.get("deployment",{}),indent=2,default=str)+"\n\nFinal test partition is locked and must not be used for tuning or feature selection.")
+                tabs.setCurrentIndex(2); self.status.showMessage(f"Professional {kind} Analysis completed.")
+            except Exception as exc: QMessageBox.critical(d,f"{kind} Analysis Error",str(exc))
+        run.clicked.connect(execute)
+        export=QPushButton("Export Analysis JSON"); root.addWidget(export)
+        export.clicked.connect(lambda: self._export_supervised_result(holder.get("result"),kind))
+        d.exec()
+
+    def _export_supervised_result(self,result,kind):
+        if not result: return
+        path,_=QFileDialog.getSaveFileName(self,f"Export {kind} Analysis",f"{kind.lower().replace(' ','_')}_analysis.json","JSON (*.json)")
+        if path: Path(path).write_text(json.dumps(result,indent=2,default=str),encoding="utf-8"); self.status.showMessage(f"Exported {kind} analysis to {path}")
+
+    def show_classification_analysis(self): self._show_supervised_workspace("Classification")
+    def show_regression_analysis(self): self._show_supervised_workspace("Regression")
+
     def show_duckdb_workspace(self):
         if self.data_engine.df is None: QMessageBox.warning(self,"No Data","Load data first."); return
         engine=DuckDBWorkspace(); d=QDialog(self); d.setWindowTitle("DuckDB Analytical Workspace"); d.resize(1000,700); l=QVBoxLayout(d)
@@ -1912,7 +2002,7 @@ class MainWindow(QMainWindow):
         path,_=QFileDialog.getSaveFileName(self,"Save Streamlit Presentation","DataScienceStudioPro_Presentation.py","Python (*.py)")
         if not path:return
         from agent.graph_presentation import agent_presentation_app
-        state={"report_evidence":evidence,"report_text":self.agent_report_state.get("report_text",""),"plot_results":self.agent_ds_state.get("plot_results",{}),"memory":getattr(self,"presentation_agent_memory",[]),"output_path":path,"title":"Data Science Studio Pro — Analysis Presentation"}
+        state={"report_evidence":report_safe(evidence),"report_text":self.agent_report_state.get("report_text",""),"plot_results":report_safe(self.agent_ds_state.get("plot_results",{})),"memory":getattr(self,"presentation_agent_memory",[]),"output_path":path,"title":"Data Science Studio Pro — Analysis Presentation"}
         self.presentation_agent_worker=SimpleGraphWorker(agent_presentation_app,state,{"configurable":{"thread_id":"presentation"}}); self.presentation_agent_worker.finished.connect(self.on_presentation_agent_finished); self.presentation_agent_worker.error.connect(lambda e:QMessageBox.critical(self,"Presentation Agent",e)); self.presentation_agent_worker.start(); self.status.showMessage("AI Agent Presentation is generating the Streamlit application…")
 
     def on_presentation_agent_finished(self,result):
@@ -2084,94 +2174,211 @@ class MainWindow(QMainWindow):
         except Exception as exc: QMessageBox.critical(self,"Model Promotion",str(exc))
     def show_agent_evaluation(self): self._show_json_dialog("Agent Evaluation",AgentEvaluation.evaluate(self.agent_ds_state))
     def show_voice_help(self):
-        QMessageBox.information(self,"Voice Command Help","For hands-free operation, enable DSP_VOICE_APPROVAL=1 before starting the app, then use Accessibility → Start Voice Command. Supported commands include approve, reject, pause and abort. Ambiguous speech never approves a step.")
+        d=QDialog(self); d.setWindowTitle("Voice Command & Accessibility"); d.resize(620,420); l=QVBoxLayout(d)
+        l.addWidget(QLabel("Professional voice control is optional and never bypasses human approval. Only unambiguous commands are accepted."))
+        status=QLabel("Status: disabled"); l.addWidget(status)
+        mode=QComboBox(); mode.addItems(["Approval commands only","Approval + navigation commands"]); l.addWidget(mode)
+        test=QPushButton("Test Microphone / Speech Recognition"); toggle=QPushButton("Enable Voice Approval"); close=QPushButton("Close"); row=QHBoxLayout(); row.addWidget(test); row.addWidget(toggle); row.addWidget(close); l.addLayout(row)
+        def refresh():
+            enabled=os.environ.get("DSP_VOICE_APPROVAL","0")=="1"; status.setText("Status: ENABLED" if enabled else "Status: disabled"); toggle.setText("Disable Voice Approval" if enabled else "Enable Voice Approval")
+        def toggle_fn():
+            os.environ["DSP_VOICE_APPROVAL"]="0" if os.environ.get("DSP_VOICE_APPROVAL","0")=="1" else "1"; refresh()
+        def test_fn():
+            heard=self.voice_layer.listen_once("Please say a short command such as help or approve."); QMessageBox.information(d,"Voice Test",f"Recognized text:\n{heard or '[No unambiguous speech recognized]'}")
+        test.clicked.connect(test_fn); toggle.clicked.connect(toggle_fn); close.clicked.connect(d.accept); refresh(); d.exec()
     def start_voice_command(self):
-        if self.agent_worker and self.agent_worker.isRunning(): QMessageBox.information(self,"Voice Command","Voice approval is active for the current agent gate when DSP_VOICE_APPROVAL=1."); return
-        os.environ["DSP_VOICE_APPROVAL"]="1"; QMessageBox.information(self,"Voice Command","Voice approval mode enabled for the next Agent Data Scientist run.")
+        self.show_voice_help()
     def stop_agent_run(self):
         self.agent_abort_requested=True
         if self.agent_worker and self.agent_worker.isRunning(): self.agent_ds_state["abort_requested"]=True
         self.status.showMessage("Stop requested. The current human gate will terminate the run safely.")
+    def show_help_center(self, initial_topic=None):
+        d=QDialog(self); d.setWindowTitle("Data Science Studio Pro — Professional Help Center"); d.resize(1100,720); root=QVBoxLayout(d)
+        top=QHBoxLayout(); search=QLineEdit(); search.setPlaceholderText("Search Help: shelves, classification, regression, agents, GPU, stories, voice..."); top.addWidget(search); root.addLayout(top)
+        split=QSplitter(); root.addWidget(split,1); topics=QListWidget(); content=QTextEdit(); content.setReadOnly(True); split.addWidget(topics); split.addWidget(content); split.setSizes([280,800])
+        docs={
+        "Quick Start":"Load CSV/Excel/PDF → inspect Data Info and Data Quality → drag fields to Rows/Columns → configure Marks → create Sheets → run Agent Data Scientist → review every approval gate → run AI Agent Plot → generate AI Agent Report → create Presentation.",
+        "Rows / Columns / Aggregation":"Drag fields into Rows or Columns. Right-click a field to choose Automatic, Sum, Average, Count, Minimum, Maximum, Median or Count Distinct. Clear a field from the same menu. Aggregation belongs to the shelf field and is preserved as part of the view state.",
+        "Filters":"Drag numerical, categorical or datetime fields to Filters. Configure the filter and keep it active until edited or removed. Filters affect the active analytical view and should be considered when interpreting plots and model previews.",
+        "Marks":"Color, Size, Text, Detail and Tooltip are Tableau-like encodings. Use normal drag to replace the field assignment and Shift-drag to add to multi-field properties. Right-click → Clear removes the actual selection. Categorical Color produces a legend; numeric Color produces a continuous color scale.",
+        "Classification Analysis":"Use the dedicated workspace for leakage-safe classification. The pipeline performs train/test isolation, fold-local imputation/encoding/scaling, k-fold CV, hyperparameter search, and final locked-test evaluation. Methods include Logistic Regression, SVM, Random Forest, Decision Tree, KNN, Naive Bayes and Neural Network. Review accuracy, balanced accuracy, precision, recall, F1, confusion matrix, ROC-AUC, PR-AUC, log loss and Brier score according to class balance and decision costs.",
+        "Regression Analysis":"Use the dedicated regression workspace. Methods include OLS, Ridge, Lasso, Elastic Net, Polynomial Regression, SVR, Decision Tree, Random Forest, Gradient Boosting and Neural Network. Review MAE, RMSE, R², median absolute error, bias and MAPE where mathematically meaningful. Preprocessing is fitted inside training folds.",
+        "Agent Data Scientist":"The Master Agent has exactly two internal specialist agents: ML and DL. LangGraph coordinates Plan → Critic → Self-Check → Human Approval → Execute → Verify → Human Approval → Stop/Next Experiment. Each governed stage requires explicit approval. Agent Why and Self-Check are recorded as evidence objects.",
+        "AI Agent Report":"Run Agent Data Scientist and AI Agent Plot first. The Report Agent combines their evidence with the selected LLM. The report is structured into executive summary, data/governance, methodology, evaluation, diagnostics, visual findings, limitations, reproducibility and evidence appendix. Missing evidence is not invented.",
+        "Sheets and Stories":"Sheets are independent analytical views. Duplicate or create sheets, configure each view, then select sheets in the Story workspace, order them, add captions and preview the sequence. Story export supports PNG/PDF where the required rendering backend is available.",
+        "Voice and Accessibility":"Voice approval is opt-in. Accessibility → Start Voice Command opens the professional voice control panel. At an agent approval gate, only an unambiguous approve/reject/pause/abort intent can be accepted; ambiguous speech never approves a step. A microphone test is available before starting a run.",
+        "CPU / GPU":"CPU always works as the safe baseline. CPU+GPU is opportunistic and falls back to CPU when CUDA is unavailable or unsafe. GPU is strict and will not execute until hardware, PyTorch CUDA and a real CUDA runtime check pass. Low-VRAM policies protect devices such as an MX250 2 GB.",
+        "Troubleshooting":"If the app reports GPU unavailable, distinguish physical hardware detection, driver state, PyTorch CUDA build, architecture compatibility and runtime initialization. If a plot fails, use Plot → Format Plot and inspect the Agent Run Console. If an agent stops at approval, review Agent Why, Self-Check and the proposed action before approving.",
+        "Reproducibility":"Analysis Recipes, dataset fingerprints, model artifacts, evidence IDs, parameters, seeds and approval decisions are recorded where applicable. The final test set is protected from model selection and tuning.",
+        "About":"Data Science Studio Pro is an evidence-first desktop data-analysis environment designed for professional exploratory analysis, supervised ML/DL, visualization, governed agents, reproducible reporting and human-controlled analytical workflows."}
+        for k in docs: topics.addItem(k)
+        def show(item): content.setPlainText(docs.get(item.text(),""))
+        topics.currentItemChanged.connect(lambda cur,prev: show(cur) if cur else None)
+        if initial_topic and initial_topic in docs: topics.setCurrentRow(list(docs.keys()).index(initial_topic))
+        else: topics.setCurrentRow(0)
+        search.textChanged.connect(lambda q: [topics.item(i).setHidden(bool(q.strip()) and q.lower() not in topics.item(i).text().lower() and q.lower() not in docs[topics.item(i).text()].lower()) for i in range(topics.count())])
+        d.exec()
+
     def show_help_topic(self, topic):
-        text={
-          "shelves":"Drag fields from Data Management to Rows or Columns. Multiple fields are supported. Marks Color/Size/Text/Detail/Tooltip also accept real field drags; their dropdowns are functional secondary selectors. Measures aggregate; dimensions define groups. The shelf containing the measure determines horizontal/vertical orientation.",
-          "filters":"Drag any numerical, categorical or datetime field from Data Management directly into Filters. The dedicated drop target accepts the field and opens the appropriate filter editor. The filter remains persistent until edited or removed.",
-          "views":"Sheets are standalone analytical views. Story opens the combined Dashboard + Story workspace: arrange multiple sheets in a grid, apply a global filter, and navigate story steps with captions.",
-          "agents":"Agent Data Scientist is the Master Agent with exactly two internal agents: ML and DL. LangGraph orchestrates state and transitions; human approval gates every executable milestone. AI Agent Table Creation handles Web Scraping/API-key table acquisition. AI Agent Report produces evidence-bound PDF output, and AI Agent Presentation consumes that report to create an editable Streamlit application. Abort Run safely terminates the Master workflow.",
-          "charts":"Supported native-style views include bar, stacked bar, line, area, dual-axis, scatter, histogram, box plot, heatmap, highlight table, pie/donut, Pareto, waterfall, Gantt and bullet. Date fields can be drilled through Year → Quarter → Month → Week → Day; categorical hierarchies can be defined through the Sheets/Story workspace.",
-          "about":"Data Science Studio Pro is a desktop, evidence-first data-science environment. Governance, reproducibility, model cards, dataset cards, lineage and human approvals are recorded alongside analytical results."}[topic]
-        self._show_text_dialog("Data Science Studio Pro Help",text)
+        mapping={"quickstart":"Quick Start","shelves":"Rows / Columns / Aggregation","filters":"Filters","classification":"Classification Analysis","regression":"Regression Analysis","views":"Sheets and Stories","agents":"Agent Data Scientist","compute":"CPU / GPU","charts":"Marks","troubleshooting":"Troubleshooting","about":"About"}
+        if topic in mapping:
+            # Reuse the Help Center so every topic has searchable professional guidance.
+            self.show_help_center(mapping[topic]); return
+        self._show_text_dialog("Data Science Studio Pro Help", "Use Help Center for searchable documentation.")
+
     def _show_text_dialog(self,title,text):
         d=QDialog(self); d.setWindowTitle(title); d.resize(900,650); l=QVBoxLayout(d); w=QTextEdit(); w.setReadOnly(True); w.setFont(QFont("Arial",10)); w.setPlainText(str(text)); l.addWidget(w); d.exec()
     def _show_json_dialog(self,title,obj): self._show_text_dialog(title,json.dumps(obj,indent=2,default=str))
 
     def _open_tableau_workspace(self, mode="sheet"):
-        if self.data_engine.df is None: QMessageBox.warning(self,"No Data","Load data first."); return
-        d=QDialog(self); d.setWindowTitle("Sheets / Dashboards / Stories"); d.resize(1150,800); root=QVBoxLayout(d)
+        """Professional Sheet/Story workspace. Main application geometry is unchanged."""
+        if self.data_engine.df is None:
+            QMessageBox.warning(self,"No Data","Load data first."); return
+        d=QDialog(self); d.setWindowTitle("Sheets / Dashboards / Stories — Professional Workspace"); d.resize(1200,820); root=QVBoxLayout(d)
         tabs=QTabWidget(); root.addWidget(tabs)
-        # Tableau-like standalone Sheet manager.
-        sheet_tab=QWidget(); sl=QVBoxLayout(sheet_tab); buttons=QHBoxLayout(); newb=QPushButton("New Sheet"); dupb=QPushButton("Duplicate"); delb=QPushButton("Delete"); buttons.addWidget(newb); buttons.addWidget(dupb); buttons.addWidget(delb); sl.addLayout(buttons)
-        sheet_list=QListWidget(); sl.addWidget(sheet_list); preview=FigureCanvas(Figure(figsize=(9,4),dpi=90)); sl.addWidget(preview)
+
+        def snapshot(name):
+            return {
+                "name":name,
+                "rows":self.viz_engine.parse_shelf(self.rows_input.text()),
+                "columns":self.viz_engine.parse_shelf(self.cols_input.text()),
+                "chart":self.chart_combo.currentText(),
+                "marks":{k:self._mark_values(k) for k in self.marks_widgets},
+                "shelf_aggregations":json.loads(json.dumps(self.shelf_aggregations,default=str)),
+                "agg_func":self.sheet_manager.get_sheet_config(self.sheet_manager.active_sheet).get("agg_func","sum"),
+                "data":self.data_engine.df.copy(),
+            }
+
+        def render_snapshot(snap, canvas=None):
+            fig=(canvas.figure if canvas is not None else Figure(figsize=(9,5),dpi=100)); fig.clear(); ax=fig.add_subplot(111)
+            df=snap.get("data") if isinstance(snap.get("data"),pd.DataFrame) else self.data_engine.df
+            rows=[c for c in snap.get("rows",[]) if c in df.columns]; cols=[c for c in snap.get("columns",[]) if c in df.columns]
+            try:
+                agg=(snap.get("agg_func") or "sum")
+                data=self.viz_engine.aggregate_for_shelves(df,rows,cols,agg)
+                nums=[c for c in data.columns if pd.api.types.is_numeric_dtype(data[c])]; dims=[c for c in data.columns if c not in nums]
+                chart=snap.get("chart","auto"); y=nums[0] if nums else (data.columns[-1] if len(data.columns) else None); x=dims[0] if dims else None
+                if data.empty or y is None: ax.text(.5,.5,"Empty analytical view",ha="center",va="center")
+                elif chart in {"line","line_discrete","line_continuous","area"} and x: ax.plot(data[x].astype(str),data[y],marker="o"); ax.tick_params(axis="x",rotation=45)
+                elif chart=="scatter" and len(nums)>=2: ax.scatter(data[nums[0]],data[nums[1]],s=40); ax.set_xlabel(nums[0]); ax.set_ylabel(nums[1])
+                elif chart in {"pie","donut"} and x: ax.pie(data[y],labels=data[x].astype(str),autopct="%1.1f%%");
+                elif x: ax.bar(data[x].astype(str),data[y]); ax.tick_params(axis="x",rotation=45); ax.set_ylabel(y)
+                else: ax.bar([y],[float(data[y].iloc[0])]); ax.set_ylabel(y)
+                ax.set_title(snap.get("name","Sheet"),fontsize=12); fig.subplots_adjust(left=.08,right=.97,bottom=.22,top=.88)
+            except Exception as exc: ax.text(.5,.5,f"View error: {exc}",ha="center",va="center")
+            if canvas is not None: canvas.draw()
+            return fig
+
+        # -------- Sheets tab --------
+        sheet_tab=QWidget(); sl=QVBoxLayout(sheet_tab); toolbar=QHBoxLayout()
+        newb=QPushButton("New Sheet"); dupb=QPushButton("Duplicate"); renameb=QPushButton("Rename"); delb=QPushButton("Delete"); applyb=QPushButton("Use Selected Sheet")
+        for b in (newb,dupb,renameb,delb,applyb): toolbar.addWidget(b)
+        toolbar.addStretch(); sl.addLayout(toolbar)
+        split=QSplitter(); sl.addWidget(split,1); sheet_list=QListWidget(); preview=FigureCanvas(Figure(figsize=(9,5),dpi=100)); split.addWidget(sheet_list); split.addWidget(preview); split.setSizes([260,900])
         for name in self.sheet_manager.sheets: sheet_list.addItem(name)
-        def render_sheet(name):
-            cfg=self.sheet_manager.sheets.get(name,{})
-            df=cfg.get("data") if isinstance(cfg,dict) and isinstance(cfg.get("data"),pd.DataFrame) else self.data_engine.df
-            fig=preview.figure; fig.clear(); ax=fig.add_subplot(111)
-            rows=self.viz_engine.parse_shelf(self.rows_input.text()); cols=self.viz_engine.parse_shelf(self.cols_input.text());
-            plan=self.viz_engine.plan_shelves(df,rows,cols); data=self.viz_engine.aggregate_for_shelves(df,rows,cols,cfg.get("agg_func","sum") if isinstance(cfg,dict) else "sum")
-            if data.empty: ax.text(.5,.5,"Empty sheet",ha="center",va="center")
-            else:
-                nums=[c for c in data.columns if pd.api.types.is_numeric_dtype(data[c])]; dims=[c for c in data.columns if c not in nums]; y=nums[0] if nums else data.columns[-1]; x=dims[0] if dims else None
-                if self.chart_combo.currentText() in {"line","area"} and x: ax.plot(data[x].astype(str),data[y],marker="o")
-                elif self.chart_combo.currentText()=="scatter" and len(nums)>=2: ax.scatter(data[nums[0]],data[nums[1]])
-                elif x: ax.bar(data[x].astype(str),data[y]); ax.tick_params(axis="x",rotation=45)
-                else: ax.bar([y],[float(data[y].iloc[0])])
-                ax.set_title(name)
-            fig.subplots_adjust(left=.10,right=.97,bottom=.18,top=.90); preview.draw()
-        def selected_name():
+
+        def selected():
             i=sheet_list.currentItem(); return i.text() if i else None
-        sheet_list.itemClicked.connect(lambda i: render_sheet(i.text()))
+        def get_snap(name):
+            cfg=self.sheet_manager.sheets.get(name,{})
+            if "view_snapshot" in cfg:return cfg["view_snapshot"]
+            return {"name":name,"rows":self.viz_engine.parse_shelf(self.rows_input.text()),"columns":self.viz_engine.parse_shelf(self.cols_input.text()),"chart":cfg.get("mark_type","Bar").lower(),"marks":{},"shelf_aggregations":{},"agg_func":cfg.get("agg_func","sum"),"data":cfg.get("data",self.data_engine.df.copy())}
+        def refresh_preview():
+            name=selected()
+            if name: render_snapshot(get_snap(name),preview)
         def create_sheet():
-            name=f"Sheet {len(self.sheet_manager.sheets)+1}"; self.sheet_manager.sheets[name]={"x_col":None,"y_col":None,"mark_type":"Bar","color_col":None,"size_col":None,"agg_func":"sum","data":self.data_engine.df.copy()}; sheet_list.addItem(name); sheet_list.setCurrentRow(sheet_list.count()-1); render_sheet(name)
+            name=f"Sheet {len(self.sheet_manager.sheets)+1}"
+            snap=snapshot(name); self.sheet_manager.sheets[name]={"data":self.data_engine.df.copy(),"agg_func":"sum","view_snapshot":snap,"x_col":None,"y_col":None,"mark_type":self.chart_combo.currentText(),"color_col":self._mark_value("Color"),"size_col":self._mark_value("Size")}
+            sheet_list.addItem(name); sheet_list.setCurrentRow(sheet_list.count()-1); refresh_preview()
         def duplicate_sheet():
-            name=selected_name();
+            name=selected()
             if not name:return
-            new=f"{name} Copy"; self.sheet_manager.sheets[new]=dict(self.sheet_manager.sheets[name]); sheet_list.addItem(new)
+            new=f"{name} Copy"; cfg=dict(self.sheet_manager.sheets[name]); cfg["view_snapshot"]=dict(cfg.get("view_snapshot",get_snap(name))); cfg["view_snapshot"]["name"]=new; self.sheet_manager.sheets[new]=cfg; sheet_list.addItem(new); sheet_list.setCurrentRow(sheet_list.count()-1); refresh_preview()
+        def rename_sheet():
+            name=selected()
+            if not name:return
+            new,ok=QInputDialog.getText(d,"Rename Sheet","New sheet name:",text=name)
+            if ok and new.strip() and new.strip()!=name:
+                cfg=self.sheet_manager.sheets.pop(name); cfg["view_snapshot"]=dict(cfg.get("view_snapshot",{})); cfg["view_snapshot"]["name"]=new.strip(); self.sheet_manager.sheets[new.strip()]=cfg; sheet_list.currentItem().setText(new.strip()); refresh_preview()
         def delete_sheet():
-            name=selected_name();
+            name=selected()
             if not name:return
             if len(self.sheet_manager.sheets)<=1: QMessageBox.warning(d,"Sheets","At least one sheet must remain."); return
-            self.sheet_manager.sheets.pop(name,None); sheet_list.takeItem(sheet_list.currentRow())
-        newb.clicked.connect(create_sheet); dupb.clicked.connect(duplicate_sheet); delb.clicked.connect(delete_sheet)
+            self.sheet_manager.sheets.pop(name,None); sheet_list.takeItem(sheet_list.currentRow()); refresh_preview()
+        def use_sheet():
+            name=selected()
+            if not name:return
+            snap=get_snap(name); self.rows_input.setText(self.viz_engine.format_shelf(snap.get("rows",[]))); self.cols_input.setText(self.viz_engine.format_shelf(snap.get("columns",[]))); self.chart_combo.setCurrentText(snap.get("chart","auto"))
+            for k,vals in snap.get("marks",{}).items():
+                if k in self.marks_widgets: self.marks_widgets[k].set_selected_fields(vals if isinstance(vals,list) else [vals])
+            self.shelf_aggregations=snap.get("shelf_aggregations",{"Rows":{},"Columns":{}}); self.update_plot(); self.status.showMessage(f"Activated sheet: {name}")
+        sheet_list.currentItemChanged.connect(lambda cur,prev: refresh_preview()); newb.clicked.connect(create_sheet); dupb.clicked.connect(duplicate_sheet); renameb.clicked.connect(rename_sheet); delb.clicked.connect(delete_sheet); applyb.clicked.connect(use_sheet)
         tabs.addTab(sheet_tab,"Sheets")
 
-        # Combined Dashboard + Story workspace: grid of Sheet objects + global filters + step navigation.
-        story_tab=QWidget(); gl=QVBoxLayout(story_tab); controls=QHBoxLayout(); add=QPushButton("Add Current Sheet"); prevb=QPushButton("Previous"); nextb=QPushButton("Next"); field_combo=QComboBox(); value_combo=QComboBox(); controls.addWidget(add); controls.addWidget(prevb); controls.addWidget(nextb); controls.addWidget(QLabel("Global Filter:")); controls.addWidget(field_combo); controls.addWidget(value_combo); gl.addLayout(controls)
-        grid=QGridLayout(); gl.addLayout(grid); caption=QTextEdit(); caption.setMaximumHeight(95); gl.addWidget(caption)
-        dashboard=TableauDashboard("Dashboard",[]); story=TableauStory("Story",[dashboard],[])
-        categorical=[c for c in self.data_engine.df.columns if not pd.api.types.is_numeric_dtype(self.data_engine.df[c])]
-        field_combo.addItems(categorical)
-        def refresh_values():
-            value_combo.clear(); value_combo.addItem("All"); f=field_combo.currentText()
-            if f in self.data_engine.df.columns: value_combo.addItems([str(x) for x in self.data_engine.df[f].dropna().astype(str).unique()[:200]])
-        field_combo.currentTextChanged.connect(refresh_values); refresh_values()
-        def mini_canvas(sheet):
-            cv=FigureCanvas(Figure(figsize=(4.4,2.7),dpi=80)); fig=cv.figure; ax=fig.add_subplot(111); result=sheet.render(); dat=result.get("data") if result else None
-            if dat is not None and not dat.empty:
-                nums=[c for c in dat.columns if pd.api.types.is_numeric_dtype(dat[c])]; dims=[c for c in dat.columns if c not in nums]; y=nums[0] if nums else None; x=dims[0] if dims else None
-                if y and x: ax.bar(dat[x].astype(str),dat[y]); ax.tick_params(axis="x",rotation=45,labelsize=7)
-                elif len(nums)>=2: ax.scatter(dat[nums[0]],dat[nums[1]],s=25)
-            ax.set_title(sheet.name,fontsize=9); fig.subplots_adjust(left=.10,right=.97,bottom=.18,top=.90); return cv
-        def rebuild():
-            while grid.count(): item=grid.takeAt(0); w=item.widget(); w.deleteLater() if w else None
-            for i,sheet in enumerate(dashboard.filtered_sheets()): grid.addWidget(mini_canvas(sheet),i//2,i%2)
-            caption.setPlainText(story.captions[story.current_step] if story.captions and story.current_step<len(story.captions) else "Dashboard step: all sheets share the global filter.")
-        def add_sheet():
-            rows=self.viz_engine.parse_shelf(self.rows_input.text()); cols=self.viz_engine.parse_shelf(self.cols_input.text()); marks={"color_col":self._mark_value("Color"),"size_col":self._mark_value("Size"),"text_col":self._mark_value("Text"),"detail_col":self._mark_value("Detail"),"tooltip_col":self._mark_value("Tooltip")}
-            sheet=TableauSheet(f"Sheet {len(dashboard.sheets)+1}",self.data_engine.df.copy(),rows,cols,self.chart_combo.currentText(),marks,self.sheet_manager.get_sheet_config(self.sheet_manager.active_sheet).get("agg_func","sum")); dashboard.sheets.append(sheet); story.captions.append(f"Story step {len(story.captions)+1}: review the current dashboard and the recorded analytical view."); rebuild()
-        def global_filter():
-            f=field_combo.currentText(); v=value_combo.currentText(); dashboard.global_filters={f:v} if f and v!="All" else {}; rebuild()
-        add.clicked.connect(add_sheet); value_combo.currentTextChanged.connect(global_filter); nextb.clicked.connect(lambda:(story.next(),rebuild())); prevb.clicked.connect(lambda:(story.previous(),rebuild())); rebuild(); tabs.addTab(story_tab,"Dashboard + Story")
+        # -------- Story tab --------
+        story_tab=QWidget(); gl=QVBoxLayout(story_tab); controls=QHBoxLayout(); story_name=QLineEdit("Story 1"); new_story=QPushButton("New Story"); add=QPushButton("Add Selected Sheet"); remove=QPushButton("Remove"); up=QPushButton("Move Up"); down=QPushButton("Move Down");
+        controls.addWidget(QLabel("Story:")); controls.addWidget(story_name); controls.addWidget(new_story); controls.addWidget(add); controls.addWidget(remove); controls.addWidget(up); controls.addWidget(down); gl.addLayout(controls)
+        body=QSplitter(); gl.addWidget(body,1); available=QListWidget(); ordered=QListWidget(); body.addWidget(available); body.addWidget(ordered); body.setSizes([280,280])
+        editor=QVBoxLayout(); editor_w=QWidget(); editor_w.setLayout(editor); body.addWidget(editor_w)
+        caption=QTextEdit(); caption.setPlaceholderText("Story text / explanation for the selected story point…"); caption.setMaximumHeight(150); editor.addWidget(QLabel("Story Point Text")); editor.addWidget(caption)
+        story_preview=FigureCanvas(Figure(figsize=(8,5),dpi=90)); editor.addWidget(story_preview,1)
+        exportrow=QHBoxLayout(); pngb=QPushButton("Export Story PNG"); pdfb=QPushButton("Export Story PDF"); exportrow.addWidget(pngb); exportrow.addWidget(pdfb); editor.addLayout(exportrow)
+        for name in self.sheet_manager.sheets: available.addItem(name)
+        story_data={"name":"Story 1","items":[],"captions":{}}
+        def refresh_story_preview():
+            fig=story_preview.figure; fig.clear(); items=[]
+            for i in range(ordered.count()):
+                n=ordered.item(i).text(); items.append(get_snap(n))
+            if not items:
+                ax=fig.add_subplot(111); ax.text(.5,.5,"Add plotted sheets to create a story",ha="center",va="center")
+            else:
+                for i,snap in enumerate(items):
+                    ax=fig.add_subplot(max(1,int(np.ceil(len(items)/2))),2,i+1)
+                    # render_snapshot creates its own figure, so use a lightweight direct rendering for story thumbnails
+                    ax.clear(); df=snap.get("data",self.data_engine.df); rows=snap.get("rows",[]); cols=snap.get("columns",[]); data=self.viz_engine.aggregate_for_shelves(df,rows,cols,snap.get("agg_func","sum")); nums=[c for c in data.columns if pd.api.types.is_numeric_dtype(data[c])]; dims=[c for c in data.columns if c not in nums]
+                    if nums:
+                        y=nums[0]; x=dims[0] if dims else None
+                        if x: ax.bar(data[x].astype(str),data[y]); ax.tick_params(axis="x",rotation=45,labelsize=7)
+                        else: ax.bar([y],[float(data[y].iloc[0])])
+                    ax.set_title(snap.get("name","Sheet"),fontsize=9)
+            fig.subplots_adjust(left=.05,right=.98,bottom=.10,top=.93,wspace=.25,hspace=.35); story_preview.draw()
+        def add_sheet_story():
+            item=available.currentItem()
+            if not item:return
+            name=item.text()
+            if [ordered.item(i).text() for i in range(ordered.count())].count(name)==0:
+                ordered.addItem(name); story_data["items"].append(name); story_data["captions"][name]=""; refresh_story_preview()
+        def remove_story():
+            i=ordered.currentRow()
+            if i<0:return
+            name=ordered.takeItem(i).text(); story_data["items"]= [x for x in story_data["items"] if x!=name]; refresh_story_preview()
+        def move(delta):
+            i=ordered.currentRow(); j=i+delta
+            if i<0 or j<0 or j>=ordered.count():return
+            item=ordered.takeItem(i); ordered.insertItem(j,item); ordered.setCurrentRow(j); story_data["items"]= [ordered.item(k).text() for k in range(ordered.count())]; refresh_story_preview()
+        def caption_changed():
+            item=ordered.currentItem()
+            if item: story_data["captions"][item.text()]=caption.toPlainText()
+        def select_story_item(cur,prev):
+            if cur: caption.setPlainText(story_data["captions"].get(cur.text(),"")); refresh_story_preview()
+        def new_story_fn():
+            story_data["name"]=story_name.text().strip() or f"Story {len(self.story_workspace_state.get('stories',[]))+1}"; story_data["items"]=[]; story_data["captions"]={}; ordered.clear(); caption.clear(); refresh_story_preview()
+        def export_story(fmt):
+            items=[get_snap(ordered.item(i).text()) for i in range(ordered.count())]
+            if not items: QMessageBox.warning(d,"Story","Add at least one sheet to the story."); return
+            path,_=QFileDialog.getSaveFileName(d,f"Export Story as {fmt.upper()}",f"{story_data['name']}.{fmt}",f"{fmt.upper()} Files (*.{fmt})")
+            if not path:return
+            try:
+                if fmt=="png":
+                    story_preview.figure.savefig(path,dpi=300,bbox_inches="tight")
+                else:
+                    from matplotlib.backends.backend_pdf import PdfPages
+                    with PdfPages(path) as pdf:
+                        for snap in items:
+                            fig=Figure(figsize=(11.69,8.27),dpi=120); canvas=FigureCanvas(fig); render_snapshot(snap,canvas); pdf.savefig(fig,bbox_inches="tight")
+                self.status.showMessage(f"Story exported to {path}")
+            except Exception as exc: QMessageBox.critical(d,"Story Export",str(exc))
+        available.itemDoubleClicked.connect(lambda item:add_sheet_story()); add.clicked.connect(add_sheet_story); remove.clicked.connect(remove_story); up.clicked.connect(lambda:move(-1)); down.clicked.connect(lambda:move(1)); ordered.currentItemChanged.connect(select_story_item); caption.textChanged.connect(caption_changed); new_story.clicked.connect(new_story_fn); pngb.clicked.connect(lambda:export_story("png")); pdfb.clicked.connect(lambda:export_story("pdf")); refresh_story_preview(); tabs.addTab(story_tab,"Stories")
         d.exec()
 
     # ============================================================
@@ -2417,6 +2624,11 @@ class MainWindow(QMainWindow):
 
             if measures:
                 agg_map={m:func for m in measures}
+                for shelf_name, shelf_fields in (("Rows", rows), ("Columns", cols)):
+                    for f in shelf_fields:
+                        if f in agg_map:
+                            chosen = self.shelf_aggregations.get(shelf_name, {}).get(f)
+                            if chosen in {"sum","mean","count","min","max","median","nunique"}: agg_map[f] = chosen
                 mark_to_col={"Color":color_col,"Size":size_col,"Text":text_col,"Tooltip":tooltip_col}
                 for mark_name, field in mark_to_col.items():
                     if field in agg_map and hasattr(self,"mark_aggregations"):
@@ -2454,7 +2666,7 @@ class MainWindow(QMainWindow):
                 color_col=categorical_color_fields[0]
 
             if chart=="auto":
-                chart="vertical_bar" if any(c in cols for c in numeric_shelf) else "horizontal_bar"
+                chart="scatter" if len(numeric_shelf)>=2 else ("vertical_bar" if any(c in cols for c in numeric_shelf) else "horizontal_bar")
             orientation="horizontal" if any(c in cols for c in numeric_shelf) else "vertical"
             if hasattr(self,"_sort_order") and len(base_dims)==1 and base_dims[0] in work.columns:
                 work[base_dims[0]]=pd.Categorical(work[base_dims[0]].astype(str),categories=self._sort_order,ordered=True); work=work.sort_values(base_dims[0])
@@ -2482,7 +2694,7 @@ class MainWindow(QMainWindow):
                     self.ax.scatter(work[xfield],work[yfield],s=sizes,c=pd.to_numeric(color_values,errors="coerce"),cmap="viridis",alpha=.8)
                     self.fig.colorbar(self.ax.collections[-1],ax=self.ax,label=color_col)
                 elif color_col and color_col in work.columns:
-                    cats={v:i for i,v in enumerate(pd.unique(work[color_col]))}; vals=work[color_col].map(cats).to_numpy(float); self.ax.scatter(work[xfield],work[yfield],s=sizes,c=vals,cmap="tab10",alpha=.8)
+                    cats={v:i for i,v in enumerate(pd.unique(work[color_col]))}; vals=work[color_col].map(cats).to_numpy(float); self.ax.scatter(work[xfield],work[yfield],s=sizes,c=vals,cmap="tab10",alpha=.8); self._add_categorical_legend(work,color_col)
                 else: self.ax.scatter(work[xfield],work[yfield],s=sizes,alpha=.8)
                 self.ax.set_xlabel(xfield); self.ax.set_ylabel(yfield)
             elif chart=="histogram": self.ax.hist(pd.to_numeric(df[primary],errors="coerce").dropna(),bins="auto",alpha=.8); self.ax.set_xlabel(primary)
@@ -2515,6 +2727,8 @@ class MainWindow(QMainWindow):
                 if orientation=="horizontal": bars=self.ax.barh(labels,work[primary],height=self._bar_sizes(work,size_col)); self.ax.set_xlabel(primary); self.ax.set_ylabel(label_col or "Rows")
                 else: bars=self.ax.bar(labels,work[primary],width=self._bar_sizes(work,size_col)); self.ax.set_ylabel(primary); self.ax.set_xlabel(label_col or "Columns"); self.ax.tick_params(axis="x",rotation=45)
                 self._apply_bar_colors(bars,work,color_col)
+                if color_col and color_col in work.columns and not pd.api.types.is_numeric_dtype(work[color_col]):
+                    self._add_categorical_legend(work, color_col)
 
             # Text/Label mark: multiple fields are concatenated for each mark.
             active_text=[f for f in text_cols if f in work.columns]
@@ -2530,6 +2744,16 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.ax.text(.5,.5,f"Plot error: {exc}",ha="center",va="center")
         self.fig.subplots_adjust(left=.10,right=.97,bottom=.18,top=.90); self.canvas.draw()
+
+    def _add_categorical_legend(self, plot_df, color_col):
+        try:
+            from matplotlib.patches import Patch
+            vals = list(pd.unique(plot_df[color_col]))
+            if not vals: return
+            cmap = plt.get_cmap("tab10"); n=max(1,len(vals)-1)
+            handles=[Patch(facecolor=cmap(i/n if n else 0), label=str(v)) for i,v in enumerate(vals)]
+            self.ax.legend(handles=handles, title=str(color_col), loc="best", frameon=True)
+        except Exception: pass
 
     def _bar_sizes(self, plot_df, size_col):
         if not size_col or size_col not in plot_df.columns or not pd.api.types.is_numeric_dtype(plot_df[size_col]): return 0.8

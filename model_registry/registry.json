@@ -4,21 +4,31 @@
     "version": 1,
     "artifact": "model_registry\\Gradient_Boosting_v1.joblib",
     "metrics": {
-      "r2": 0.9801009023638961,
-      "mae": 19.999400937909932,
-      "rmse": 31.956481834555778,
-      "r2_uncertainty": {
-        "estimate": 0.9801009023638961,
-        "lower": 0.971621044330222,
-        "upper": 0.9861291018490111,
-        "confidence": 0.95
-      }
+      "r2": 0.7018363709604172,
+      "mae": 2236.5757486543507,
+      "rmse": 3006.7962172540456
     },
     "tags": {
       "agent": "ML",
       "task": "regression"
     },
-    "created_at": "2026-09-29T06:31:31.483141+00:00",
+    "created_at": "2026-09-30T10:06:55.191447+00:00",
+    "stage": "candidate"
+  },
+  {
+    "name": "Gradient Boosting",
+    "version": 2,
+    "artifact": "model_registry\\Gradient_Boosting_v2.joblib",
+    "metrics": {
+      "r2": 0.7018363709604172,
+      "mae": 2236.5757486543507,
+      "rmse": 3006.7962172540456
+    },
+    "tags": {
+      "agent": "ML",
+      "task": "regression"
+    },
+    "created_at": "2026-09-30T10:18:44.501633+00:00",
     "stage": "candidate"
   }
 ]

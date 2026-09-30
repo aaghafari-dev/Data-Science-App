@@ -24,3 +24,5 @@ lxml
 
 # Optional pure-Python PDF table fallback
 pdfplumber
+
+kaleido

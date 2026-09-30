@@ -55,7 +55,12 @@ def _metric_summary(y_true, y_pred, task: str) -> dict[str, Any]:
 
 
 class ProfessionalEvaluationEngine:
-    """Produce a professional evaluation bundle rather than a single metric."""
+    """Professional, leakage-aware evaluation.
+
+    Critical policy: model-selection CV is performed on *training data only*.
+    The held-out test set is evaluated once after the model/protocol has been
+    selected. This prevents the final test set from becoming a tuning resource.
+    """
 
     @staticmethod
     def baseline(y_train, y_test, task: str) -> dict[str, Any]:
@@ -65,47 +70,46 @@ class ProfessionalEvaluationEngine:
         return {"model": "Dummy baseline", "metrics": _metric_summary(y_test, pred, task)}
 
     @staticmethod
-    def evaluate_holdout(y_true, y_pred, task: str) -> dict[str, Any]:
+    def evaluate_holdout(y_true, y_pred, task: str, seed: int = 42) -> dict[str, Any]:
         metrics = _metric_summary(y_true, y_pred, task)
         primary = "f1_weighted" if task == "classification" else "r2"
         try:
+            metric_fn = f1_score if task == "classification" else r2_score
             metrics[f"{primary}_uncertainty"] = StatisticalUncertainty.bootstrap_metric(
-                y_true, y_pred, f1_score if task == "classification" else r2_score,
-                n_boot=300,
+                y_true, y_pred, metric_fn, n_boot=500, seed=seed,
             )
         except Exception:
             pass
-        return {"metrics": metrics, "primary_metric": primary}
+        return {"metrics": metrics, "primary_metric": primary, "evaluation_population": "locked_holdout_test"}
 
     @staticmethod
-    def cross_validation(pipeline, X: pd.DataFrame, y, task: str, seed: int = 42) -> dict[str, Any]:
-        n = len(y)
+    def cross_validation(pipeline, X_train: pd.DataFrame, y_train, task: str, seed: int = 42, n_jobs: int = 1) -> dict[str, Any]:
+        """Evaluate candidate models only inside the training partition."""
+        n = len(y_train)
         if n < 30:
-            return {"status": "insufficient_data", "reason": "Fewer than 30 rows; repeated cross-validation was not run."}
+            return {"status": "insufficient_data", "reason": "Fewer than 30 training rows; repeated cross-validation was not run."}
         folds = 5 if n >= 100 else 3
+        repeats = 2 if n >= 100 else 1
         if task == "classification":
-            min_class = int(pd.Series(y).value_counts().min())
+            min_class = int(pd.Series(y_train).value_counts().min())
             folds = min(folds, min_class)
             if folds < 2:
                 return {"status": "insufficient_data", "reason": "Not enough observations per class for cross-validation."}
-            cv = RepeatedStratifiedKFold(n_splits=folds, n_repeats=2 if n >= 100 else 1, random_state=seed)
+            cv = RepeatedStratifiedKFold(n_splits=folds, n_repeats=repeats, random_state=seed)
             scoring = {"accuracy": "accuracy", "balanced_accuracy": "balanced_accuracy", "f1_weighted": "f1_weighted"}
         else:
-            cv = RepeatedKFold(n_splits=folds, n_repeats=2 if n >= 100 else 1, random_state=seed)
+            cv = RepeatedKFold(n_splits=folds, n_repeats=repeats, random_state=seed)
             scoring = {"r2": "r2", "mae": "neg_mean_absolute_error", "rmse": "neg_root_mean_squared_error"}
         try:
-            raw = cross_validate(pipeline, X, y, cv=cv, scoring=scoring, n_jobs=1, return_train_score=True)
+            raw = cross_validate(pipeline, X_train, y_train, cv=cv, scoring=scoring, n_jobs=n_jobs, return_train_score=True)
         except Exception as exc:
             return {"status": "error", "reason": str(exc)}
-        out: dict[str, Any] = {"status": "ok", "folds": folds, "repeats": 2 if n >= 100 else 1, "metrics": {}}
+        out: dict[str, Any] = {"status": "ok", "folds": folds, "repeats": repeats, "evaluation_population": "training_partition_only", "metrics": {}}
         for key in scoring:
             values = np.asarray(raw[f"test_{key}"], float)
-            if key in {"mae", "rmse"}:
-                values = -values
-            train_key = f"train_{key}"
-            train_values = np.asarray(raw[train_key], float)
-            if key in {"mae", "rmse"}:
-                train_values = -train_values
+            if key in {"mae", "rmse"}: values = -values
+            train_values = np.asarray(raw[f"train_{key}"], float)
+            if key in {"mae", "rmse"}: train_values = -train_values
             out["metrics"][key] = {
                 "mean": _safe_float(np.mean(values)),
                 "std": _safe_float(np.std(values, ddof=1)) if len(values) > 1 else 0.0,
@@ -113,6 +117,7 @@ class ProfessionalEvaluationEngine:
                 "max": _safe_float(np.max(values)),
                 "train_mean": _safe_float(np.mean(train_values)),
                 "generalization_gap": _safe_float(np.mean(train_values) - np.mean(values)),
+                "fold_values": [_safe_float(v) for v in values],
             }
         return out
 
@@ -121,7 +126,8 @@ class ProfessionalEvaluationEngine:
         try:
             if not hasattr(pipeline, "predict_proba"):
                 return {"status": "not_available"}
-            proba = pipeline.predict_proba(X_test)
+            from sklearn.metrics import brier_score_loss, log_loss
+            proba = np.asarray(pipeline.predict_proba(X_test), dtype=float)
             p = np.max(proba, axis=1)
             pred = pipeline.predict(X_test)
             correct = (np.asarray(pred) == np.asarray(y_test)).astype(float)
@@ -129,33 +135,59 @@ class ProfessionalEvaluationEngine:
             rows = []
             for lo, hi in zip(bins[:-1], bins[1:]):
                 mask = (p >= lo) & ((p < hi) if hi < 1 else (p <= hi))
-                if not mask.any():
-                    continue
-                rows.append({"confidence_mean": _safe_float(np.mean(p[mask])), "accuracy": _safe_float(np.mean(correct[mask])), "n": int(mask.sum())})
+                if mask.any():
+                    rows.append({"confidence_mean": _safe_float(np.mean(p[mask])), "accuracy": _safe_float(np.mean(correct[mask])), "n": int(mask.sum())})
             ece = float(sum((r["n"] / len(p)) * abs(r["confidence_mean"] - r["accuracy"]) for r in rows)) if len(p) else None
-            return {"status": "ok", "expected_calibration_error": ece, "bins": rows}
+            # Binary Brier is directly interpretable; multiclass uses a bounded one-vs-rest aggregate.
+            try:
+                classes = getattr(pipeline, "classes_", None)
+                if classes is not None and len(classes) == 2:
+                    brier = float(brier_score_loss(np.asarray(y_test), proba[:, 1]))
+                else:
+                    y_arr = np.asarray(y_test)
+                    class_list = list(classes) if classes is not None else list(range(proba.shape[1]))
+                    one_hot = np.column_stack([(y_arr == c).astype(float) for c in class_list])
+                    brier = float(np.mean(np.sum((one_hot - proba) ** 2, axis=1)))
+            except Exception:
+                brier = None
+            try: ll = float(log_loss(y_test, proba, labels=getattr(pipeline, "classes_", None)))
+            except Exception: ll = None
+            return {"status": "ok", "expected_calibration_error": ece, "brier_score": brier, "log_loss": ll, "bins": rows}
         except Exception as exc:
             return {"status": "error", "reason": str(exc)}
 
     @staticmethod
-    def evaluate_bundle(pipeline, X_train, X_test, y_train, y_test, task: str, seed: int = 42) -> dict[str, Any]:
+    def evaluate_bundle(pipeline, X_train, X_test, y_train, y_test, task: str, seed: int = 42, n_jobs: int = 1) -> dict[str, Any]:
         pred = pipeline.predict(X_test)
-        holdout = ProfessionalEvaluationEngine.evaluate_holdout(y_test, pred, task)
+        holdout = ProfessionalEvaluationEngine.evaluate_holdout(y_test, pred, task, seed=seed)
         baseline = ProfessionalEvaluationEngine.baseline(y_train, y_test, task)
-        cv = ProfessionalEvaluationEngine.cross_validation(clone(pipeline), pd.concat([X_train, X_test]), pd.concat([pd.Series(y_train), pd.Series(y_test)], ignore_index=True), task, seed)
+        # IMPORTANT: CV is training-only. The test partition remains locked.
+        cv = ProfessionalEvaluationEngine.cross_validation(clone(pipeline), X_train, y_train, task, seed, n_jobs=n_jobs)
         calibration = ProfessionalEvaluationEngine.classification_calibration(pipeline, X_test, y_test) if task == "classification" else {"status": "not_applicable"}
-        uncertainty = (PredictionUncertaintyEngine.classification(pipeline, X_test) if task == "classification" else PredictionUncertaintyEngine.regression(pipeline, X_train, y_train, X_test, pred))
+        uncertainty = (PredictionUncertaintyEngine.classification(pipeline, X_test, y_test) if task == "classification" else PredictionUncertaintyEngine.regression(pipeline, X_train, y_train, X_test, pred))
         robustness = RobustnessPerturbationAnalyzer.run(pipeline, X_test, y_test, task, seed=seed)
-        bundle = {
+        from services.data_slice_analysis import DataSliceAnalyzer
+        slices = DataSliceAnalyzer.run(X_test, y_test, pred, task)
+        return {
             "holdout": holdout,
             "baseline": baseline,
             "cross_validation": cv,
             "calibration": calibration,
             "prediction_uncertainty": uncertainty,
             "robustness_perturbation": robustness,
+            "data_slices": slices,
             "evaluation_level": "professional",
+            "test_set_locked": True,
+            "selection_policy": "Model selection must use training-only CV; final test is reserved for final reporting.",
         }
-        return bundle
+
+    @staticmethod
+    def candidate_score(evaluation: dict[str, Any], task: str) -> float | None:
+        cv = evaluation.get("cross_validation", {})
+        metrics = cv.get("metrics", {})
+        key = "f1_weighted" if task == "classification" else "r2"
+        value = (metrics.get(key) or {}).get("mean")
+        return _safe_float(value)
 
 
 class PredictionUncertaintyEngine:
@@ -167,26 +199,49 @@ class PredictionUncertaintyEngine:
     """
 
     @staticmethod
-    def regression(pipeline, X_train, y_train, X_test, y_pred, confidence: float = .95) -> dict[str, Any]:
+    def regression(pipeline, X_train, y_train, X_test, y_pred, confidence: float = .95, seed: int = 42) -> dict[str, Any]:
+        """OOF-residual conformal-style diagnostic using training data only.
+
+        This is a finite-sample diagnostic under exchangeability-like assumptions.
+        It does not claim distribution-free validity for arbitrary deployment shift.
+        """
         try:
-            train_pred = np.asarray(pipeline.predict(X_train), dtype=float).reshape(-1)
-            yt = np.asarray(y_train, dtype=float).reshape(-1)
+            from sklearn.model_selection import KFold
+            from sklearn.base import clone
+            X_train = X_train.reset_index(drop=True)
+            y_arr = np.asarray(y_train)
+            n = len(X_train)
+            if n < 30:
+                train_pred = np.asarray(pipeline.predict(X_train), dtype=float).reshape(-1)
+                residuals = np.abs(y_arr.astype(float) - train_pred)
+                method = "training_residual_diagnostic"
+            else:
+                folds = min(5, max(3, n // 40))
+                kf = KFold(n_splits=folds, shuffle=True, random_state=seed)
+                oof = np.empty(n, dtype=float)
+                for tr_idx, va_idx in kf.split(X_train):
+                    model = clone(pipeline)
+                    model.fit(X_train.iloc[tr_idx], y_arr[tr_idx])
+                    oof[va_idx] = np.asarray(model.predict(X_train.iloc[va_idx]), dtype=float).reshape(-1)
+                residuals = np.abs(y_arr.astype(float) - oof)
+                method = "cross_validated_abs_residual_interval"
+            alpha = 1 - confidence
+            q = float(np.quantile(residuals, min(1.0, max(0.0, (1-alpha) * (1 + 1/max(len(residuals),1))))))
             yp = np.asarray(y_pred, dtype=float).reshape(-1)
-            residuals = yt - train_pred
-            alpha = (1 - confidence) / 2
-            qlo, qhi = np.quantile(residuals, [alpha, 1-alpha])
-            lower = yp + qlo; upper = yp + qhi
-            coverage = float(np.mean((np.asarray(y_train, float) >= (train_pred+qlo)) & (np.asarray(y_train, float) <= (train_pred+qhi))))
-            return {"status":"ok","method":"empirical_residual_interval","confidence":confidence,
-                    "residual_quantiles":{"lower":float(qlo),"upper":float(qhi)},
-                    "test_interval_summary":{"mean_width":float(np.mean(upper-lower)),"median_width":float(np.median(upper-lower))},
-                    "training_interval_coverage":coverage,
-                    "interpretation":"Approximate predictive interval based on empirical training residuals; validate coverage on the deployment population."}
+            lower, upper = yp - q, yp + q
+            return {
+                "status":"ok", "method":method, "confidence":confidence,
+                "absolute_residual_quantile":q,
+                "residual_quantiles":{"lower":-q,"upper":q},
+                "test_interval_summary":{"mean_width":float(np.mean(upper-lower)),"median_width":float(np.median(upper-lower))},
+                "calibration_residual_count":int(len(residuals)),
+                "interpretation":"Interval is calibrated from training/OOF residuals. Coverage depends on the data-generating assumptions and can fail under distribution shift; it is not a guarantee of deployment coverage.",
+            }
         except Exception as exc:
             return {"status":"error","reason":str(exc)}
 
     @staticmethod
-    def classification(pipeline, X_test) -> dict[str, Any]:
+    def classification(pipeline, X_test, y_test=None) -> dict[str, Any]:
         try:
             if not hasattr(pipeline, "predict_proba"):
                 return {"status":"not_available","reason":"Model does not expose predict_proba."}
@@ -203,7 +258,7 @@ class PredictionUncertaintyEngine:
 
 def prediction_uncertainty_for_model(pipeline, X_train, y_train, X_test, y_pred, task: str) -> dict[str, Any]:
     if task == "classification":
-        return PredictionUncertaintyEngine.classification(pipeline, X_test)
+        return PredictionUncertaintyEngine.classification(pipeline, X_test, y_test=None)
     return PredictionUncertaintyEngine.regression(pipeline, X_train, y_train, X_test, y_pred)
 
 
@@ -379,6 +434,25 @@ class ModelDiagnosisEngine:
         cal = evaluation.get("calibration", {})
         if cal.get("status") == "ok" and cal.get("expected_calibration_error") is not None and cal["expected_calibration_error"] > .10:
             hypotheses.append({"type": "calibration", "ece": cal["expected_calibration_error"], "severity": "review"})
+        robust = evaluation.get("robustness_perturbation", {})
+        if robust.get("status") == "ok":
+            degradations = [x for x in robust.get("tests", []) if (x.get("relative_primary_change") is not None and abs(x.get("relative_primary_change")) > .15)]
+            if degradations:
+                hypotheses.append({"type": "robustness_sensitivity", "perturbations": [x.get("perturbation") for x in degradations], "severity": "review"})
+        slices = evaluation.get("data_slices", {})
+        if slices.get("status") == "ok" and slices.get("slices"):
+            extreme = [x for x in slices["slices"] if abs(float(x.get("primary_delta_vs_overall", 0))) > .20]
+            if extreme:
+                hypotheses.append({"type": "slice_performance_difference", "slices": [{"feature":x["feature"],"value":x["value"],"n":x["n"]} for x in extreme[:5]], "severity": "review"})
+        baseline = evaluation.get("baseline", {})
+        try:
+            primary = "f1_weighted" if task == "classification" else "r2"
+            observed = (evaluation.get("holdout", {}).get("metrics", {}) or {}).get(primary)
+            base = (baseline.get("metrics", {}) or {}).get(primary)
+            if observed is not None and base is not None and abs(float(observed) - float(base)) < 0.02:
+                hypotheses.append({"type": "weak_baseline_separation", "observed": observed, "baseline": base, "severity": "review"})
+        except Exception:
+            pass
         if feature_stability and feature_stability.get("status") == "ok":
             unstable = [r for r in feature_stability.get("features", []) if r.get("positive_frequency", 0) < .50]
             if unstable:
@@ -390,6 +464,23 @@ class ModelDiagnosisEngine:
             if material:
                 hypotheses.append({"type": "counterfactual_dependence", "features": [x["feature"] for x in material], "severity": "high"})
         return {"status": "ok", "hypotheses": hypotheses, "diagnosis_level": "evidence_based", "next_actions": ["Inspect split strategy", "Review feature provenance", "Check temporal availability", "Compare with simpler baseline"] if hypotheses else ["No high-severity automated diagnostic hypothesis was triggered."]}
+
+
+class DLValidationEngine:
+    """Bounded neural-network validation diagnostics."""
+    @staticmethod
+    def seed_stability(train_fn: Callable[[int], dict[str, Any]], seeds: list[int], task: str) -> dict[str, Any]:
+        primary = "f1_weighted" if task == "classification" else "r2"
+        rows=[]
+        for seed in seeds[:3]:
+            try:
+                out=train_fn(int(seed))
+                metrics=out.get("metrics", out)
+                rows.append({"seed":int(seed),"primary":_safe_float(metrics.get(primary)),"metrics":metrics})
+            except Exception as exc:
+                rows.append({"seed":int(seed),"status":"error","reason":str(exc)})
+        vals=[r["primary"] for r in rows if r.get("primary") is not None]
+        return {"status":"ok" if vals else "error","primary_metric":primary,"runs":rows,"mean":_safe_float(np.mean(vals)) if vals else None,"std":_safe_float(np.std(vals,ddof=1)) if len(vals)>1 else 0.0,"interpretation":"Seed stability measures sensitivity to initialization/training stochasticity; it is not an independent estimate of population performance."}
 
 
 class AgentWhyEvidence:

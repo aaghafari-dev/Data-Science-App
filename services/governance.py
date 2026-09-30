@@ -159,8 +159,15 @@ class ModelCardBuilder:
             "metrics": result.get("best_metrics", {}), "models_compared": list((result.get("models") or {}).keys()),
             "dataset_fingerprint": (dataset_card or {}).get("fingerprint"),
             "leakage_gate_status": (leakage_gate or {}).get("status"),
-            "limitations": ["Performance depends on the supplied dataset and split strategy.",
-                            "Metrics should not be interpreted outside the evaluated population."],
+            "validation_protocol": result.get("validation_protocol"),
+            "selection_policy": result.get("selection_policy"),
+            "professional_evaluation": result.get("evaluation"),
+            "diagnosis": result.get("model_diagnosis"),
+            "feature_set_challenge": result.get("feature_set_challenge"),
+            "limitations": ["Performance depends on the supplied dataset, deployment population and validation strategy.",
+                            "The final test set is intended to remain locked during model selection.",
+                            "Uncertainty and robustness diagnostics are conditional on their stated assumptions.",
+                            "Automated diagnostic hypotheses require domain review and are not causal proof."],
         }
 
 

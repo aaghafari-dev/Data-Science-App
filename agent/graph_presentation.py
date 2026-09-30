@@ -23,10 +23,29 @@ class PresentationState(TypedDict, total=False):
     summary: str
     error: str
 
+def _json_safe(value):
+    """Convert pandas/numpy-rich evidence into msgpack/JSON-safe primitives."""
+    try:
+        import pandas as pd
+        import numpy as np
+        if isinstance(value, pd.DataFrame):
+            return {"__type__":"DataFrame","shape":[int(value.shape[0]),int(value.shape[1])],"columns":[str(c) for c in value.columns],"preview":value.head(20).to_dict(orient="records")}
+        if isinstance(value, pd.Series): return value.head(50).tolist()
+        if isinstance(value, dict): return {str(k): _json_safe(v) for k,v in value.items() if k not in {"model_object","figure"}}
+        if isinstance(value, (list,tuple)): return [_json_safe(v) for v in value]
+        if isinstance(value, np.ndarray): return value.tolist()
+        if isinstance(value, (np.integer,np.floating)): return value.item()
+    except Exception:
+        pass
+    try:
+        json.dumps(value); return value
+    except Exception:
+        return str(value)
+
 
 def _plan(state):
-    evidence = state.get("report_evidence") or {}
-    plots = state.get("plot_results") or evidence.get("data_visualizations") or {}
+    evidence = _json_safe(state.get("report_evidence") or {})
+    plots = _json_safe(state.get("plot_results") or evidence.get("data_visualizations") or {})
     nplots = len((plots or {}).get("plots", [])) if isinstance(plots, dict) else 0
     title = state.get("title") or "Data Science Analysis Presentation"
     summary = f"AI Agent Presentation plans a professional Streamlit presentation for '{title}' using the AI Agent Data Scientist, Plot and Report evidence, including {nplots} analytical visualizations."
@@ -34,8 +53,8 @@ def _plan(state):
 
 
 def _build(state):
-    evidence = state.get("report_evidence") or {}
-    plots = state.get("plot_results") or evidence.get("data_visualizations") or {}
+    evidence = _json_safe(state.get("report_evidence") or {})
+    plots = _json_safe(state.get("plot_results") or evidence.get("data_visualizations") or {})
     title = state.get("title") or "Data Science Analysis Presentation"
     target = evidence.get("target","Not specified")
     route = evidence.get("master_route","Not specified")
