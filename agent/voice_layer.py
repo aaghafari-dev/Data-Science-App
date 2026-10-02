@@ -1,3 +1,8 @@
+"""Module duty: Voice layer.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 
 import re
@@ -20,10 +25,18 @@ class VoiceCommandLayer:
 
     @staticmethod
     def normalize(text: str) -> str:
+        """Perform the normalize operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         return re.sub(r"[^a-z0-9 ]+", " ", text.lower().replace("-", " ")).strip()
 
     @classmethod
     def resolve(cls, text: str, allowed: Iterable[str] | None = None) -> str | None:
+        """Perform the resolve operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         text = cls.normalize(text)
         allowed = set(allowed or cls.INTENTS)
         hits = []
@@ -37,6 +50,10 @@ class VoiceCommandLayer:
         return hits[0]
 
     def listen_once(self, prompt: str = "") -> str:
+        """Perform the listen once operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         try:
             import speech_recognition as sr
             r = sr.Recognizer()

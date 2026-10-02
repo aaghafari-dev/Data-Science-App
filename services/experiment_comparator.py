@@ -1,3 +1,8 @@
+"""Module duty: Experiment comparator.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -8,6 +13,10 @@ class ExperimentComparator:
     """Compare experiments only on explicitly declared compatible metrics/protocols."""
     @staticmethod
     def compare(records: list[dict[str, Any]], metric: str | None = None) -> dict[str, Any]:
+        """Perform the compare operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         if not records:
             return {"status": "insufficient_data", "rows": []}
         rows = []

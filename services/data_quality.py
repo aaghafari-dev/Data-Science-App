@@ -1,3 +1,8 @@
+"""Module duty: Data quality.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 
 """Practical, dependency-light data-quality diagnostics for desktop analysis."""
@@ -26,6 +31,10 @@ class DataQualityEngine:
     """
 
     def assess(self, df: pd.DataFrame, target: str | None = None) -> dict[str, Any]:
+        """Perform the assess operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         if df is None or df.empty:
             return {"status": "blocked", "score": 0.0, "issues": [], "summary": "No data available."}
 
@@ -121,8 +130,17 @@ class DataQualityEngine:
             "issues": [asdict(i) for i in issues],
         }
 
+    @classmethod
+    def evaluate(cls, df: pd.DataFrame, target: str | None = None) -> dict[str, Any]:
+        """Backward-compatible class-level entry point for typed agent tools."""
+        return cls().assess(df, target=target)
+
     @staticmethod
     def data_dictionary(df: pd.DataFrame) -> pd.DataFrame:
+        """Perform the data dictionary operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         rows = []
         for c in df.columns:
             s = df[c]

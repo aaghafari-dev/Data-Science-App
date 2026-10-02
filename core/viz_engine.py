@@ -1,3 +1,8 @@
+"""Module duty: Viz engine.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -16,6 +21,7 @@ class ShelfPlan:
     x_field: str | None
     y_field: str | None
     orientation: str
+    quantitative_pair: bool = False
 
 
 class VizEngine:
@@ -25,6 +31,10 @@ class VizEngine:
 
     @staticmethod
     def parse_shelf(value: str | list[str] | None) -> list[str]:
+        """Perform the parse shelf operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         if value is None:
             return []
         if isinstance(value, list):
@@ -33,10 +43,18 @@ class VizEngine:
 
     @staticmethod
     def format_shelf(fields: list[str]) -> str:
+        """Perform the format shelf operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         return ", ".join(dict.fromkeys(fields))
 
     @staticmethod
     def add_to_shelf(value: str | None, field: str) -> str:
+        """Perform the add to shelf operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         fields = VizEngine.parse_shelf(value)
         if field not in fields:
             fields.append(field)
@@ -44,10 +62,18 @@ class VizEngine:
 
     @staticmethod
     def remove_from_shelf(value: str | None, field: str) -> str:
+        """Perform the remove from shelf operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         return VizEngine.format_shelf([x for x in VizEngine.parse_shelf(value) if x != field])
 
     @staticmethod
     def plan_shelves(df: pd.DataFrame, rows_shelf: list[str], columns_shelf: list[str]) -> ShelfPlan:
+        """Perform the plan shelves operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         fields = [x for x in rows_shelf + columns_shelf if x in df.columns]
         dimensions = [x for x in fields if not pd.api.types.is_numeric_dtype(df[x])]
         measures = [x for x in fields if pd.api.types.is_numeric_dtype(df[x])]
@@ -57,9 +83,14 @@ class VizEngine:
         row_dims = [x for x in rows_shelf if x in dimensions]
         col_dims = [x for x in columns_shelf if x in dimensions]
 
-        # Tableau's common orientation rule: a quantitative field on Columns gives
-        # a horizontal quantitative axis; on Rows it gives a vertical axis.
-        if col_measures:
+        # Tableau semantics: one quantitative field on each opposite shelf is a
+        # paired quantitative view. It should remain row-wise for scatter/line views.
+        quantitative_pair = len(row_measures) == 1 and len(col_measures) == 1 and not row_dims and not col_dims
+        if quantitative_pair:
+            x_field = col_measures[0]
+            y_field = row_measures[0]
+            orientation = "paired_quantitative"
+        elif col_measures:
             y_field = row_dims[0] if row_dims else None
             x_field = col_measures[0]
             orientation = "horizontal"
@@ -76,7 +107,7 @@ class VizEngine:
         else:
             x_field = y_field = None
             orientation = "empty"
-        return ShelfPlan(rows_shelf, columns_shelf, dimensions, measures, x_field, y_field, orientation)
+        return ShelfPlan(rows_shelf, columns_shelf, dimensions, measures, x_field, y_field, orientation, quantitative_pair)
 
     @staticmethod
     def aggregate_for_shelves(df: pd.DataFrame, rows_shelf: list[str], columns_shelf: list[str], agg_func: str = "sum") -> pd.DataFrame:
@@ -90,6 +121,11 @@ class VizEngine:
             return df.copy()
 
         if numeric_fields:
+            # Preserve paired quantitative observations when one numeric field is on
+            # Rows and one is on Columns; aggregating both into one row destroys the
+            # x/y relationship required by a Tableau-style scatter plot.
+            if len(rows) == 1 and len(cols) == 1 and len(numeric_fields) == 2 and not dimension_fields:
+                return df[numeric_fields].replace([np.inf, -np.inf], np.nan).dropna().copy()
             func = VizEngine.AGGREGATIONS.get(agg_func, "sum")
             if dimension_fields:
                 grouped = df.groupby(dimension_fields, dropna=False, as_index=False)[numeric_fields].agg(func)
@@ -105,6 +141,10 @@ class VizEngine:
 
     @staticmethod
     def build_cross_tab(df: pd.DataFrame, rows: list[str], cols: list[str], agg_func: str = "sum") -> pd.DataFrame:
+        """Perform the build cross tab operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         rows = [x for x in rows if x in df.columns]
         cols = [x for x in cols if x in df.columns]
         if not rows or not cols:

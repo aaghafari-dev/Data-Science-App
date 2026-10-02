@@ -1,3 +1,8 @@
+"""Module duty: Split wizard.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -12,6 +17,10 @@ class SplitWizard:
     @staticmethod
     def plan(df: pd.DataFrame, target: str | None, mode: str = "Random", group_col: str | None = None,
              time_col: str | None = None, test_size: float = .2, validation_size: float = .1) -> dict[str, Any]:
+        """Perform the plan operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         warnings = []
         if mode == "Stratified" and target and target in df.columns and df[target].value_counts(dropna=True).min() < 2:
             warnings.append("Some target classes have fewer than two observations; stratification may fail.")
@@ -25,6 +34,10 @@ class SplitWizard:
     @staticmethod
     def execute(df: pd.DataFrame, target: str | None, mode: str = "Random", group_col: str | None = None,
                 time_col: str | None = None, test_size: float = .2, validation_size: float = .1, seed: int = 42):
+        """Perform the execute operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         work = df.copy()
         if mode == "Time-aware":
             if not time_col or time_col not in work.columns: raise ValueError("A valid time column is required.")

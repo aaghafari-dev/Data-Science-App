@@ -1,7 +1,14 @@
+"""Module duty: Graph dl.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 
 from typing import Any
 import time
+import warnings
+from sklearn.exceptions import ConvergenceWarning
 
 import numpy as np
 import pandas as pd
@@ -21,6 +28,10 @@ from sklearn.metrics import accuracy_score, f1_score, r2_score, mean_absolute_er
 
 
 def _torch_mlp(Xtr, Xte, ytr, yte, task, seed, device, epochs=120):
+    """Perform the torch mlp operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     import torch
     import torch.nn as nn
     torch.manual_seed(seed)
@@ -101,12 +112,19 @@ def run_dl_step(df: pd.DataFrame, target: str | None = None, seed: int = 42, com
             compute.diagnostics.append(f"CUDA execution failed safely: {exc}")
             compute.message += " CUDA execution failed safely; using CPU MLP."
     if model_obj is None:
-        estimator = MLPClassifier(hidden_layer_sizes=(128,64), max_iter=500, early_stopping=True, random_state=seed) if task=="classification" else MLPRegressor(hidden_layer_sizes=(128,64), max_iter=500, early_stopping=True, random_state=seed)
+        estimator = MLPClassifier(hidden_layer_sizes=(128,64), max_iter=1000, early_stopping=True, n_iter_no_change=20, tol=1e-3, random_state=seed) if task=="classification" else MLPRegressor(hidden_layer_sizes=(128,64), max_iter=1000, early_stopping=True, n_iter_no_change=20, tol=1e-3, random_state=seed)
         pipe=Pipeline([("pre",build_preprocessor(X)),("model",estimator)])
-        pipe.fit(Xtr,ytr); pred=pipe.predict(Xte); model_obj=pipe
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            pipe.fit(Xtr,ytr)
+        convergence_warnings=[str(w.message) for w in caught if issubclass(w.category,ConvergenceWarning)]
+        pred=pipe.predict(Xte); model_obj=pipe
+        if convergence_warnings: metrics_warning=convergence_warnings[:5]
+        else: metrics_warning=[]
         if task=="classification": metrics={"accuracy":float(accuracy_score(yte,pred)),"f1_weighted":float(f1_score(yte,pred,average="weighted"))}; evaluation=ErrorAnalysisEngine.classification(yte,pred)
         else: metrics={"r2":float(r2_score(yte,pred)),"mae":float(mean_absolute_error(yte,pred)),"rmse":float(mean_squared_error(yte,pred)**.5)}; evaluation=ErrorAnalysisEngine.regression(yte,pred)
         metrics["error_analysis"]=evaluation
+        if metrics_warning: metrics["convergence_warnings"]=metrics_warning
     primary="f1_weighted" if task=="classification" else "r2"
     pred_final = model_obj.predict(Xte) if hasattr(model_obj, "predict") else (
         np.argmax(model_obj(torch.tensor(Xte.toarray() if hasattr(Xte,"toarray") else np.asarray(Xte),dtype=torch.float32).to("cuda" if compute.mode in {"GPU","CPU+GPU"} and compute.gpu_available else "cpu")).detach().cpu().numpy(),axis=1)
@@ -144,6 +162,10 @@ def run_dl_step(df: pd.DataFrame, target: str | None = None, seed: int = 42, com
             import torch
             device = "cuda" if compute.mode in {"GPU", "CPU+GPU"} and compute.gpu_available else "cpu"
             def torch_predict(raw_df):
+                """Perform the torch predict operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
                 arr = pre.transform(raw_df)
                 tensor = torch.tensor(arr.toarray() if hasattr(arr,"toarray") else np.asarray(arr), dtype=torch.float32).to(device)
                 with torch.no_grad(): out=model_obj(tensor).detach().cpu().numpy()
@@ -159,6 +181,10 @@ def run_dl_step(df: pd.DataFrame, target: str | None = None, seed: int = 42, com
                 device = "cuda" if backend=="PyTorch CUDA MLP" else "cpu"
                 Xtr_seed=pre.transform(Xtr); Xte_seed=pre.transform(Xte)
                 def _seed_run(rs):
+                    """Perform the seed run operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
                     _m,_metrics=_torch_mlp(Xtr_seed,Xte_seed,ytr,yte,task,rs,device,epochs=60)
                     return {"metrics":_metrics}
                 seed_stability=DLValidationEngine.seed_stability(_seed_run,[seed,seed+1],task)
@@ -166,6 +192,10 @@ def run_dl_step(df: pd.DataFrame, target: str | None = None, seed: int = 42, com
                 from sklearn.neural_network import MLPClassifier as _MC, MLPRegressor as _MR
                 from sklearn.pipeline import Pipeline as _Pipe
                 def _seed_run(rs):
+                    """Perform the seed run operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
                     est=_MC(hidden_layer_sizes=(128,64),max_iter=350,early_stopping=True,random_state=rs) if task=="classification" else _MR(hidden_layer_sizes=(128,64),max_iter=350,early_stopping=True,random_state=rs)
                     pp=_Pipe([("pre",build_preprocessor(Xtr)),("model",est)]); pp.fit(Xtr,ytr); pr=pp.predict(Xte)
                     mm={"accuracy":float(accuracy_score(yte,pr)),"f1_weighted":float(f1_score(yte,pr,average="weighted"))} if task=="classification" else {"r2":float(r2_score(yte,pr)),"mae":float(mean_absolute_error(yte,pr)),"rmse":float(mean_squared_error(yte,pr)**.5)}

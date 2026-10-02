@@ -1,3 +1,8 @@
+"""Module duty: Agent tools.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -28,18 +33,34 @@ class ToolSpec:
 class TypedAgentToolRegistry:
     """Typed, permissioned, preflighted and cache-aware analytical tool registry."""
     def __init__(self):
+        """Perform the init operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         self._tools: dict[str, ToolSpec] = {}
         self.cache = AnalysisCache(max_items=32)
 
     def register(self, spec: ToolSpec):
+        """Perform the register operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         self._tools[spec.name] = spec
 
     def get(self, name: str) -> ToolSpec:
+        """Perform the get operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         if name not in self._tools:
             raise KeyError(f"Unknown agent tool: {name}")
         return self._tools[name]
 
     def describe(self):
+        """Perform the describe operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         return [{
             "name": s.name, "version": s.version, "description": s.description,
             "capabilities": list(s.capabilities), "input_schema": s.input_schema,
@@ -50,6 +71,10 @@ class TypedAgentToolRegistry:
         } for s in self._tools.values()]
 
     def dry_run(self, name: str, **kwargs) -> dict[str, Any]:
+        """Perform the dry run operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         spec = self.get(name)
         missing = [k for k, v in spec.input_schema.get("required", {}).items() if k not in kwargs or kwargs[k] is None]
         df = next((v for v in kwargs.values() if isinstance(v, pd.DataFrame)), None)
@@ -66,6 +91,10 @@ class TypedAgentToolRegistry:
                 "will_execute":False,"note":"Dry-run only; no handler was executed and no data were modified."}
 
     def execute(self, name: str, *, human_approved: bool = False, evidence_bound: bool = False, gpu_available: bool | None = None, **kwargs):
+        """Perform the execute operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         spec = self.get(name)
         missing = [k for k, v in spec.input_schema.get("required", {}).items() if k not in kwargs or kwargs[k] is None]
         if missing:
@@ -89,6 +118,10 @@ class TypedAgentToolRegistry:
 
     @staticmethod
     def _timed_execute(spec: ToolSpec, kwargs: dict[str, Any]):
+        """Perform the timed execute operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         t0 = time.monotonic()
         result = spec.handler(**kwargs)
         max_seconds = spec.budget.get("max_seconds")
@@ -98,6 +131,10 @@ class TypedAgentToolRegistry:
 
 
 def default_registry() -> TypedAgentToolRegistry:
+    """Perform the default registry operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     from services.data_quality import DataQualityEngine
     from services.data_contracts import DataContractEngine
     from services.error_analysis import ErrorAnalysisEngine
@@ -108,6 +145,11 @@ def default_registry() -> TypedAgentToolRegistry:
     from services.evaluation_protocol import ValidationProtocolAdvisor
     from services.feature_provenance import FeatureProvenanceEngine
     from services.method_selection import AnalyticalMethodAdvisor
+    from agent.graph_cluster import run_clustering_step
+    from agent.graph_anomaly import run_anomaly_step
+    from agent.graph_statistics import run_statistics_step
+    from agent.graph_timeseries import run_time_series_step
+    from agent.graph_cnn import run_cnn_image_step
 
     r = TypedAgentToolRegistry()
     read_budget = {"max_rows": 1_000_000, "max_seconds": 30}
@@ -125,4 +167,9 @@ def default_registry() -> TypedAgentToolRegistry:
     r.register(ToolSpec("robustness_perturbation", "2.0", "Test bounded jitter, missingness and clipping sensitivity.", {"required":{"pipeline":"model", "X_test":"DataFrame", "y_test":"array", "task":"str"}}, ("model_results", "robustness"), RobustnessPerturbationAnalyzer.run, budget={"max_seconds":60}, requires_evidence=True))
     r.register(ToolSpec("prediction_uncertainty", "2.0", "Estimate prediction-level uncertainty diagnostics.", {"required":{"pipeline":"model", "X_train":"DataFrame", "y_train":"array", "X_test":"DataFrame", "y_pred":"array", "task":"str"}}, ("model_results", "uncertainty"), prediction_uncertainty_for_model, budget={"max_seconds":60}, requires_evidence=True))
     r.register(ToolSpec("compute_diagnostics", "2.0", "Inspect NVIDIA hardware, PyTorch CUDA and runtime readiness.", {"required":{}}, ("hardware",), lambda: ComputeBackend.detect(runtime_validate=False).to_dict(), budget={"max_seconds":10}, cacheable=False))
+    r.register(ToolSpec("clustering", "1.0", "Run bounded unsupervised clustering diagnostics.", {"required":{"df":"DataFrame"}}, ("unsupervised", "clustering"), run_clustering_step, budget={"max_rows":250_000,"max_seconds":60}, requires_human_approval=True))
+    r.register(ToolSpec("anomaly_detection", "1.0", "Run bounded anomaly-detection diagnostics.", {"required":{"df":"DataFrame"}}, ("unsupervised", "anomaly_detection"), run_anomaly_step, budget={"max_rows":250_000,"max_seconds":60}, requires_human_approval=True))
+    r.register(ToolSpec("statistical_insights", "1.0", "Compute descriptive and association evidence.", {"required":{"df":"DataFrame"}}, ("statistics",), run_statistics_step, budget={"max_rows":1_000_000,"max_seconds":30}, cacheable=True))
+    r.register(ToolSpec("time_series", "1.0", "Analyze a date/value time-series pair.", {"required":{"df":"DataFrame"}}, ("time_series",), run_time_series_step, budget={"max_rows":500_000,"max_seconds":60}, requires_human_approval=True))
+    r.register(ToolSpec("cnn_image_analysis", "1.0", "Run bounded CNN image classification with transfer learning/fine-tuning controls.", {"required":{"image_dir":"str"}}, ("deep_learning", "image_analysis"), run_cnn_image_step, budget={"max_seconds":1800}, requires_human_approval=True, requires_evidence=True))
     return r

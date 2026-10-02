@@ -1,3 +1,8 @@
+"""Module duty: Governance.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 
 """Professional governance, reproducibility and evidence services.
@@ -19,10 +24,18 @@ import pandas as pd
 
 
 def _now() -> str:
+    """Perform the now operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     return datetime.now(timezone.utc).isoformat()
 
 
 def _jsonable(value: Any) -> Any:
+    """Perform the jsonable operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     if isinstance(value, (np.integer, np.floating, np.bool_)):
         return value.item()
     if isinstance(value, (pd.Timestamp, datetime)):
@@ -35,6 +48,10 @@ def _jsonable(value: Any) -> Any:
 
 
 def frame_fingerprint(df: pd.DataFrame) -> str:
+    """Perform the frame fingerprint operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     if df is None:
         return "none"
     payload = pd.util.hash_pandas_object(df, index=True).values.tobytes()
@@ -54,6 +71,10 @@ class EvidenceObject:
     parent_ids: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
+        """Perform the to dict operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         return _jsonable(asdict(self))
 
 
@@ -62,6 +83,10 @@ class HumanApprovalEvidence:
 
     @staticmethod
     def create(step: str, decision: str, summary: str, actor: str = "user", evidence_ids: list[str] | None = None) -> dict[str, Any]:
+        """Perform the create operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         return EvidenceObject(
             evidence_id=f"approval-{sha256(f'{step}|{decision}|{_now()}'.encode()).hexdigest()[:12]}",
             kind="human_approval",
@@ -80,6 +105,10 @@ class ScientificDataLeakageGate:
     )
 
     def evaluate(self, df: pd.DataFrame, target: str | None = None, test_df: pd.DataFrame | None = None) -> dict[str, Any]:
+        """Perform the evaluate operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         if df is None or df.empty:
             return {"status": "blocked", "severity": "high", "issues": ["No data available."], "checks": []}
         target = target or df.columns[-1]
@@ -138,6 +167,10 @@ class ScientificDataLeakageGate:
 class DatasetCardBuilder:
     @staticmethod
     def build(df: pd.DataFrame, source: str = "unknown", purpose: str = "analysis") -> dict[str, Any]:
+        """Perform the build operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         if df is None:
             return {}
         return {
@@ -153,6 +186,10 @@ class DatasetCardBuilder:
 class ModelCardBuilder:
     @staticmethod
     def build(result: dict[str, Any], dataset_card: dict[str, Any] | None = None, leakage_gate: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Perform the build operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         return {
             "card_type": "Model Card", "created_at": _now(), "agent": result.get("agent"),
             "task": result.get("task"), "target": result.get("target"), "best_model": result.get("best_model"),
@@ -174,6 +211,10 @@ class ModelCardBuilder:
 class StatisticalUncertainty:
     @staticmethod
     def bootstrap_mean(values: Any, n_boot: int = 1000, confidence: float = 0.95, seed: int = 42) -> dict[str, float]:
+        """Perform the bootstrap mean operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         x = pd.to_numeric(pd.Series(values), errors="coerce").dropna().to_numpy(float)
         if len(x) < 2:
             return {"estimate": float(x.mean()) if len(x) else float("nan"), "lower": float("nan"), "upper": float("nan"), "confidence": confidence}
@@ -184,6 +225,10 @@ class StatisticalUncertainty:
 
     @staticmethod
     def bootstrap_metric(y_true: Any, y_pred: Any, metric: Callable[[Any, Any], float], n_boot: int = 500, confidence: float = .95, seed: int = 42) -> dict[str, float]:
+        """Perform the bootstrap metric operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         yt, yp = np.asarray(y_true), np.asarray(y_pred)
         if len(yt) < 2 or len(yt) != len(yp):
             return {"estimate": float("nan"), "lower": float("nan"), "upper": float("nan"), "confidence": confidence}
@@ -196,6 +241,10 @@ class StatisticalUncertainty:
 class ExperimentComparator:
     @staticmethod
     def compare(records: list[dict[str, Any]]) -> pd.DataFrame:
+        """Perform the compare operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         rows = []
         for r in records:
             metrics = r.get("metrics") or {}
@@ -216,15 +265,27 @@ class ModelPromotionRegistry:
     STAGES = ("development", "candidate", "staging", "production", "archived")
 
     def __init__(self):
+        """Perform the init operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         self.records: dict[str, dict[str, Any]] = {}
 
     def register(self, model_id: str, metrics: dict[str, Any], evidence_ids: list[str] | None = None, stage: str = "development") -> dict[str, Any]:
+        """Perform the register operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         if stage not in self.STAGES:
             raise ValueError(f"Invalid model stage: {stage}")
         record = {"model_id": model_id, "metrics": _jsonable(metrics), "stage": stage, "updated_at": _now(), "evidence_ids": evidence_ids or []}
         self.records[model_id] = record; return record
 
     def promote(self, model_id: str, stage: str, approval: dict[str, Any]) -> dict[str, Any]:
+        """Perform the promote operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         if model_id not in self.records: raise KeyError(model_id)
         if approval.get("kind") != "human_approval" or approval.get("data", {}).get("decision") != "approved":
             raise PermissionError("Model promotion requires a first-class human approval evidence object.")
@@ -236,6 +297,10 @@ class ModelPromotionRegistry:
 class DataDiff:
     @staticmethod
     def compare(before: pd.DataFrame, after: pd.DataFrame) -> dict[str, Any]:
+        """Perform the compare operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         before_cols, after_cols = set(before.columns), set(after.columns)
         added, removed = sorted(after_cols - before_cols), sorted(before_cols - after_cols)
         common = sorted(before_cols & after_cols)
@@ -249,16 +314,38 @@ class DataDiff:
 
 
 class EvidenceDAG:
-    def __init__(self): self.nodes: dict[str, dict[str, Any]] = {}; self.edges: list[tuple[str, str, str]] = []
+    def __init__(self):
+        """Perform the init operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
+        self.nodes: dict[str, dict[str, Any]] = {}; self.edges: list[tuple[str, str, str]] = []
     def add(self, evidence: dict[str, Any]) -> str:
+        """Perform the add operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         eid = evidence.get("evidence_id") or f"e-{len(self.nodes)+1}"
         self.nodes[eid] = evidence
         for parent in evidence.get("parent_ids", []): self.edges.append((parent, eid, "supports"))
         return eid
-    def to_dict(self): return {"nodes": list(self.nodes.values()), "edges": [list(e) for e in self.edges]}
+    def to_dict(self):
+        """Perform the to dict operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
+        return {"nodes": list(self.nodes.values()), "edges": [list(e) for e in self.edges]}
     def to_mermaid(self) -> str:
+        """Perform the to mermaid operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         lines = ["flowchart LR"]
         def node_id(value: str) -> str:
+            """Perform the node id operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
             return re.sub(r"\W", "_", str(value))
         for eid, n in self.nodes.items():
             safe_id = node_id(eid)
@@ -273,6 +360,10 @@ class EvidenceDAG:
 class AgentEvaluation:
     @staticmethod
     def evaluate(run_state: dict[str, Any]) -> dict[str, Any]:
+        """Perform the evaluate operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         approvals = run_state.get("approved_steps", [])
         rejects = run_state.get("rejected_steps", [])
         ml = run_state.get("ml_results") or {}; dl = run_state.get("dl_results") or {}
@@ -293,13 +384,30 @@ class AnalysisExtension:
 
 class ControlledAnalysisExtensionAPI:
     """Typed, allow-listed extension registry; no unrestricted plugin execution."""
-    def __init__(self): self._extensions: dict[str, AnalysisExtension] = {}
+    def __init__(self):
+        """Perform the init operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
+        self._extensions: dict[str, AnalysisExtension] = {}
     def register(self, extension: AnalysisExtension):
+        """Perform the register operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         if not extension.name or not extension.version: raise ValueError("Extension name/version required")
         self._extensions[extension.name] = extension
     def list(self) -> list[dict[str, Any]]:
+        """Perform the list operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         return [{"name": e.name, "version": e.version, "capabilities": e.capabilities, "input_schema": e.input_schema} for e in self._extensions.values()]
     def execute(self, name: str, capability: str, **kwargs):
+        """Perform the execute operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         e = self._extensions[name]
         if capability not in e.capabilities: raise PermissionError(f"Capability '{capability}' is not allowed for extension '{name}'.")
         return e.handler(**kwargs)

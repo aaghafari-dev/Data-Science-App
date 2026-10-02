@@ -1,3 +1,8 @@
+"""Module duty: Result verification.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -8,6 +13,10 @@ class ResultVerifier:
     """Independent consistency checks over agent-produced evidence."""
     @staticmethod
     def verify(result: dict[str, Any] | None) -> dict[str, Any]:
+        """Perform the verify operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         if not result:
             return {"status":"fail","checks":[{"check":"result_present","status":"fail"}]}
         checks=[]

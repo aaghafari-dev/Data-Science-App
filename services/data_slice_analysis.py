@@ -1,3 +1,8 @@
+"""Module duty: Data slice analysis.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -7,6 +12,10 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score, a
 
 
 def _metrics(y, pred, task):
+    """Perform the metrics operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     if task == "classification":
         return {"accuracy": float(accuracy_score(y, pred)), "f1_weighted": float(f1_score(y, pred, average="weighted", zero_division=0))}
     return {"mae": float(mean_absolute_error(y, pred)), "rmse": float(np.sqrt(mean_squared_error(y, pred))), "r2": float(r2_score(y, pred))}
@@ -17,6 +26,10 @@ class DataSliceAnalyzer:
 
     @staticmethod
     def run(X: pd.DataFrame, y, predictions, task: str, min_rows: int = 25, max_slices: int = 12) -> dict[str, Any]:
+        """Perform the run operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         if X is None or len(X) == 0:
             return {"status": "insufficient_data", "reason": "No evaluation rows."}
         base = _metrics(y, predictions, task)

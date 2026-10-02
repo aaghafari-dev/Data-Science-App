@@ -1,3 +1,8 @@
+"""Module duty: Tool preflight.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -17,10 +22,18 @@ class ToolPreflight:
     estimated_seconds: float | None = None
 
     def to_dict(self):
+        """Perform the to dict operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         return {"status": self.status, "tool": self.tool, "checks": self.checks, "estimated_rows": self.estimated_rows, "estimated_memory_mb": self.estimated_memory_mb, "estimated_seconds": self.estimated_seconds}
 
 
 def estimate_dataframe(df: pd.DataFrame | None) -> tuple[int | None, float | None]:
+    """Perform the estimate dataframe operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     if df is None:
         return None, None
     try:
@@ -30,6 +43,10 @@ def estimate_dataframe(df: pd.DataFrame | None) -> tuple[int | None, float | Non
 
 
 def preflight(tool_name: str, *, df: pd.DataFrame | None = None, required_inputs: list[str] | None = None, budget: dict[str, Any] | None = None, requires_gpu: bool = False, gpu_available: bool | None = None, requires_human_approval: bool = False, requires_evidence: bool = False, human_approved: bool = False, evidence_bound: bool = False) -> ToolPreflight:
+    """Perform the preflight operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     rows, mem = estimate_dataframe(df)
     budget = budget or {}
     checks = []

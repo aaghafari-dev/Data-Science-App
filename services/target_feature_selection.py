@@ -1,3 +1,8 @@
+"""Module duty: Target feature selection.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 from typing import Any
 import re
@@ -10,6 +15,10 @@ _FUTURE_PATTERNS = re.compile(r"future|next|lead|after|outcome|post_|future_|tim
 
 
 def _target_candidate_score(df: pd.DataFrame, c: str) -> tuple[float, list[str]]:
+    """Perform the target candidate score operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     s = df[c]; reasons: list[str] = []; score = 0.0
     if _TARGET_PATTERNS.search(str(c)):
         score += 3; reasons.append("target-like name")
@@ -31,6 +40,10 @@ def _target_candidate_score(df: pd.DataFrame, c: str) -> tuple[float, list[str]]
 
 
 def _pairwise_redundancy(df: pd.DataFrame, max_cols: int = 40) -> list[dict[str, Any]]:
+    """Perform the pairwise redundancy operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     nums = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c]) and df[c].notna().sum() >= 5][:max_cols]
     out: list[dict[str, Any]] = []
     if len(nums) < 2: return out
@@ -60,6 +73,10 @@ def _pairwise_redundancy(df: pd.DataFrame, max_cols: int = 40) -> list[dict[str,
 
 
 def recommend_targets_and_features(df: pd.DataFrame) -> dict[str, Any]:
+    """Perform the recommend targets and features operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     if df is None or df.empty:
         return {"target_candidates": [], "feature_candidates": [], "warnings": ["No data available."]}
     targets = []

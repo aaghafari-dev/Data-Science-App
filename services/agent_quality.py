@@ -1,3 +1,8 @@
+"""Module duty: Agent quality.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 
 """High-level agent quality, evaluation and leakage diagnostics.
@@ -29,6 +34,10 @@ from services.governance import EvidenceObject, StatisticalUncertainty
 
 
 def _safe_float(x: Any) -> float | None:
+    """Perform the safe float operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     try:
         value = float(x)
         return value if np.isfinite(value) else None
@@ -37,6 +46,10 @@ def _safe_float(x: Any) -> float | None:
 
 
 def _metric_summary(y_true, y_pred, task: str) -> dict[str, Any]:
+    """Perform the metric summary operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     if task == "classification":
         yt, yp = np.asarray(y_true), np.asarray(y_pred)
         return {
@@ -64,6 +77,10 @@ class ProfessionalEvaluationEngine:
 
     @staticmethod
     def baseline(y_train, y_test, task: str) -> dict[str, Any]:
+        """Perform the baseline operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         estimator = DummyClassifier(strategy="most_frequent") if task == "classification" else DummyRegressor(strategy="mean")
         estimator.fit(np.zeros((len(y_train), 1)), y_train)
         pred = estimator.predict(np.zeros((len(y_test), 1)))
@@ -71,6 +88,10 @@ class ProfessionalEvaluationEngine:
 
     @staticmethod
     def evaluate_holdout(y_true, y_pred, task: str, seed: int = 42) -> dict[str, Any]:
+        """Perform the evaluate holdout operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         metrics = _metric_summary(y_true, y_pred, task)
         primary = "f1_weighted" if task == "classification" else "r2"
         try:
@@ -123,6 +144,10 @@ class ProfessionalEvaluationEngine:
 
     @staticmethod
     def classification_calibration(pipeline, X_test, y_test) -> dict[str, Any]:
+        """Perform the classification calibration operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         try:
             if not hasattr(pipeline, "predict_proba"):
                 return {"status": "not_available"}
@@ -158,6 +183,10 @@ class ProfessionalEvaluationEngine:
 
     @staticmethod
     def evaluate_bundle(pipeline, X_train, X_test, y_train, y_test, task: str, seed: int = 42, n_jobs: int = 1) -> dict[str, Any]:
+        """Perform the evaluate bundle operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         pred = pipeline.predict(X_test)
         holdout = ProfessionalEvaluationEngine.evaluate_holdout(y_test, pred, task, seed=seed)
         baseline = ProfessionalEvaluationEngine.baseline(y_train, y_test, task)
@@ -183,6 +212,10 @@ class ProfessionalEvaluationEngine:
 
     @staticmethod
     def candidate_score(evaluation: dict[str, Any], task: str) -> float | None:
+        """Perform the candidate score operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         cv = evaluation.get("cross_validation", {})
         metrics = cv.get("metrics", {})
         key = "f1_weighted" if task == "classification" else "r2"
@@ -242,6 +275,10 @@ class PredictionUncertaintyEngine:
 
     @staticmethod
     def classification(pipeline, X_test, y_test=None) -> dict[str, Any]:
+        """Perform the classification operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         try:
             if not hasattr(pipeline, "predict_proba"):
                 return {"status":"not_available","reason":"Model does not expose predict_proba."}
@@ -257,6 +294,10 @@ class PredictionUncertaintyEngine:
 
 
 def prediction_uncertainty_for_model(pipeline, X_train, y_train, X_test, y_pred, task: str) -> dict[str, Any]:
+    """Perform the prediction uncertainty for model operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     if task == "classification":
         return PredictionUncertaintyEngine.classification(pipeline, X_test, y_test=None)
     return PredictionUncertaintyEngine.regression(pipeline, X_train, y_train, X_test, y_pred)
@@ -267,6 +308,10 @@ class RobustnessPerturbationAnalyzer:
 
     @staticmethod
     def run(pipeline, X_test: pd.DataFrame, y_test, task: str, seed: int = 42, predict_fn: Callable[[pd.DataFrame], Any] | None = None) -> dict[str, Any]:
+        """Perform the run operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         if X_test is None or X_test.empty:
             return {"status":"insufficient_data","reason":"No test data available."}
         rng=np.random.default_rng(seed)
@@ -312,6 +357,10 @@ class FeatureStabilityAnalyzer:
 
     @staticmethod
     def run(pipeline_factory: Callable[[], Any], X: pd.DataFrame, y, task: str, repeats: int = 3, max_features: int = 25, seed: int = 42) -> dict[str, Any]:
+        """Perform the run operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         if X is None or X.empty or len(X) < 40:
             return {"status": "insufficient_data", "reason": "At least 40 rows are required for feature stability analysis."}
         features = list(X.columns)[:max_features]
@@ -348,6 +397,10 @@ class TemporalAvailabilityAnalyzer:
 
     @classmethod
     def run(cls, df: pd.DataFrame, target: str | None = None, max_features: int = 30, bins: int = 10) -> dict[str, Any]:
+        """Perform the run operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         if df is None or df.empty:
             return {"status": "insufficient_data", "reason": "No dataframe."}
         dates = list(df.select_dtypes(include=["datetime", "datetimetz"]).columns)
@@ -392,6 +445,10 @@ class CounterfactualLeakageAnalyzer:
 
     @staticmethod
     def run(pipeline_factory: Callable[[list[str]], Any], X: pd.DataFrame, y, task: str, candidate_features: list[str], seed: int = 42) -> dict[str, Any]:
+        """Perform the run operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         if X is None or X.empty or not candidate_features:
             return {"status": "not_available", "reason": "No candidate features were supplied."}
         strat = y if task == "classification" and pd.Series(y).value_counts().min() >= 2 else None
@@ -424,6 +481,10 @@ class ModelDiagnosisEngine:
 
     @staticmethod
     def diagnose(task: str, evaluation: dict[str, Any], feature_stability: dict[str, Any] | None = None, temporal: dict[str, Any] | None = None, leakage: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Perform the diagnose operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         hypotheses = []
         cv = evaluation.get("cross_validation", {})
         if cv.get("status") == "ok":
@@ -470,6 +531,10 @@ class DLValidationEngine:
     """Bounded neural-network validation diagnostics."""
     @staticmethod
     def seed_stability(train_fn: Callable[[int], dict[str, Any]], seeds: list[int], task: str) -> dict[str, Any]:
+        """Perform the seed stability operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         primary = "f1_weighted" if task == "classification" else "r2"
         rows=[]
         for seed in seeds[:3]:
@@ -488,6 +553,10 @@ class AgentWhyEvidence:
 
     @staticmethod
     def create(agent: str, decision: str, rationale: list[str], evidence_refs: list[str] | None = None, alternatives: list[str] | None = None, constraints: list[str] | None = None) -> dict[str, Any]:
+        """Perform the create operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         digest = hashlib.sha256(f"{agent}|{decision}|{'|'.join(rationale)}".encode()).hexdigest()[:12]
         obj = EvidenceObject(
             evidence_id=f"why-{digest}",
@@ -513,6 +582,10 @@ class AgentSelfCheck:
 
     @staticmethod
     def run(agent: str, action: str, plan: dict[str, Any], evidence: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Perform the run operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         checks = []
         required = ("objective", "inputs", "expected_output", "risk")
         missing = [x for x in required if not plan.get(x)]

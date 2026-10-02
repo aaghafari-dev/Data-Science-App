@@ -1,3 +1,8 @@
+"""Module duty: Compute backend.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
@@ -28,6 +33,10 @@ class ComputeInfo:
     diagnostics: list[str]
 
     def to_dict(self) -> dict[str, Any]:
+        """Perform the to dict operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         return asdict(self)
 
 
@@ -48,12 +57,23 @@ class ComputeBackend:
 
     @staticmethod
     def _nvidia_smi() -> dict[str, Any]:
+        """Perform the nvidia smi operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         try:
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            cmd = ["nvidia-smi", "--query-gpu=name,memory.total,memory.free,driver_version", "--format=csv,noheader,nounits"]
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=4, creationflags=creationflags)
-            if proc.returncode != 0 or not proc.stdout.strip():
-                return {"available": False, "error": (proc.stderr or "nvidia-smi returned no GPU information").strip()}
+            candidates=["nvidia-smi"]
+            if os.name=="nt": candidates.append(r"C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe")
+            proc=None; last_error="nvidia-smi not found"
+            for executable in candidates:
+                try:
+                    proc=subprocess.run([executable,"--query-gpu=name,memory.total,memory.free,driver_version","--format=csv,noheader,nounits"],capture_output=True,text=True,timeout=5,creationflags=creationflags)
+                    if proc.returncode==0 and proc.stdout.strip(): break
+                    last_error=(proc.stderr or "nvidia-smi returned no GPU information").strip()
+                except Exception as exc: last_error=str(exc)
+            if proc is None or proc.returncode != 0 or not proc.stdout.strip():
+                return {"available": False, "error": last_error}
             first = proc.stdout.strip().splitlines()[0]
             parts = [p.strip() for p in first.split(",")]
             if len(parts) < 4:
@@ -64,6 +84,10 @@ class ComputeBackend:
 
     @classmethod
     def detect(cls, runtime_validate: bool = False) -> ComputeInfo:
+        """Perform the detect operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         smi = cls._nvidia_smi()
         hardware = bool(smi.get("available"))
         name = smi.get("name")
@@ -136,6 +160,10 @@ class ComputeBackend:
 
     @classmethod
     def resolve(cls, requested: str, runtime_validate: bool = True) -> ComputeInfo:
+        """Perform the resolve operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         requested = requested if requested in cls.MODES else "CPU"
         info = cls.detect(runtime_validate=runtime_validate and requested in {"GPU", "CPU+GPU"})
         info.requested_mode = requested
@@ -154,6 +182,8 @@ class ComputeBackend:
         # general-purpose large-model backend.
         if info.vram_total_gb is not None and info.vram_total_gb <= 2.25:
             info.diagnostics.append("Low-VRAM accelerator policy: keep CUDA workloads small and use CPU for large models/data transforms.")
+            if info.gpu_name and "MX250" in info.gpu_name.upper():
+                info.diagnostics.append("MX250 profile detected: 2 GB-class VRAM is not treated as a safe local-LLM GPU backend.")
         info.mode = requested
         info.message = f"Compute mode: {requested}; GPU runtime validated on {info.gpu_name or 'NVIDIA GPU'}."
         return info

@@ -14,15 +14,21 @@
 # pyttsx3
 # faster-whisper
 # sounddevice
-# V18.3 analytical/deployment integrations
+# V20.1 analytical/deployment integrations
 duckdb
 streamlit
 jupyter
 nbformat
 
 lxml
-
 # Optional pure-Python PDF table fallback
 pdfplumber
-
 kaleido
+# PowerPoint and hardware diagnostics
+python-pptx
+psutil
+# Optional API-provider LangChain integrations
+langchain-anthropic
+langchain-google-genai
+langchain-mistralai
+langchain-cohere

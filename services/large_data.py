@@ -1,3 +1,6 @@
+"""Module duty: Progressive backend selection for large analytical datasets.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -14,8 +17,11 @@ class LargeDataEngine:
     """Progressive backend selector: Pandas -> Polars -> DuckDB -> Dask.
     It never silently changes scientific results; the selected backend is recorded.
     """
-    def __init__(self, pandas_row_limit: int = 1_000_000): self.pandas_row_limit = pandas_row_limit
+    def __init__(self, pandas_row_limit: int = 1_000_000):
+        """Initialize the backend selector with a configurable pandas row limit."""
+        self.pandas_row_limit = pandas_row_limit
     def plan(self, df: pd.DataFrame) -> BackendPlan:
+        """Select an available analytical backend from dataset scale and installed dependencies."""
         rows, cols = (0,0) if df is None else df.shape
         if rows <= self.pandas_row_limit:
             return BackendPlan("pandas", "Dataset is within the configured in-memory threshold.", rows, cols)

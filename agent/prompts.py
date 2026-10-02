@@ -1,3 +1,8 @@
+"""Module duty: Prompts.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 DS_AGENT_SYSTEM_PROMPT = """
 You are the Master Agent of Data Science Studio Pro. You orchestrate exactly two internal
 specialist agents: ML Agent and DL Agent. You are evidence-first and human-gated.

@@ -1,3 +1,8 @@
+"""Module duty: Method selection.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -8,6 +13,10 @@ class AnalyticalMethodAdvisor:
     """Question/data-structure driven statistical-method candidates with assumptions."""
     @staticmethod
     def advise(question: str, df: pd.DataFrame | None = None) -> dict[str, Any]:
+        """Perform the advise operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         q=(question or "").lower()
         methods=[]
         if any(x in q for x in ("correlation","association","related")):

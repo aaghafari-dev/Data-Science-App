@@ -1,3 +1,8 @@
+"""Module duty: Graph table creation.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 
 from typing import Any, TypedDict
@@ -32,15 +37,23 @@ class TableCreationState(TypedDict, total=False):
 
 
 def _plan(state):
+    """Perform the plan operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     mode = state.get("mode", "Web Scraping")
     msg = f"AI Agent Table Creation plans a {mode} workflow for {state.get('url','the supplied source')}."
     return {"status":"planned", "summary":msg, "messages":[AIMessage(content=msg)]}
 
 
 def _fetch(state):
+    """Perform the fetch operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     url = state.get("url", "").strip()
     if not url: return {"status":"error", "error":"A URL is required."}
-    headers = {"User-Agent":"DataScienceStudioPro/18.3 (+data-analysis-agent)"}
+    headers = {"User-Agent":"DataScienceStudioPro/20.1 (+data-analysis-agent)"}
     mode = state.get("mode", "Web Scraping")
     if mode == "API Key":
         header = state.get("api_header") or "Authorization"
@@ -55,6 +68,10 @@ def _fetch(state):
 
 
 def _extract(state):
+    """Perform the extract operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     raw = state.get("raw_content", "")
     mode = state.get("mode", "Web Scraping")
     try:
@@ -78,6 +95,10 @@ def _extract(state):
 
 
 def _finalize(state):
+    """Perform the finalize operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     memory = list(state.get("memory", []))
     memory.append({"url":state.get("url"), "mode":state.get("mode"), "summary":state.get("summary")})
     return {"memory":memory[-10:], "status":"complete", "summary":state.get("summary","Table creation completed."),
@@ -85,6 +106,10 @@ def _finalize(state):
 
 
 def _route(state):
+    """Perform the route operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     if state.get("status") == "error": return "end"
     step = state.get("status")
     return "fetch" if step == "planned" else "extract" if step == "fetched" else "finalize" if step == "validated" else "end"

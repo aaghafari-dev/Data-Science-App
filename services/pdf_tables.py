@@ -1,3 +1,8 @@
+"""Module duty: Pdf tables.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 from pathlib import Path
 from typing import Any
@@ -7,6 +12,10 @@ class PDFTableExtractor:
     """Extract tables page-by-page and preserve page/table identity."""
     @staticmethod
     def extract(path: str) -> list[dict[str, Any]]:
+        """Perform the extract operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         results=[]; p=Path(path)
         # Prefer tabula-py because it is already part of the application stack.
         try:
@@ -50,6 +59,10 @@ class PDFTableExtractor:
 
     @staticmethod
     def _clean(df):
+        """Perform the clean operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         work=df.copy()
         work.columns=[str(c).strip() if str(c).strip() and not str(c).lower().startswith("unnamed") else f"Column_{i+1}" for i,c in enumerate(work.columns)]
         work=work.dropna(axis=1,how="all").dropna(axis=0,how="all").reset_index(drop=True)

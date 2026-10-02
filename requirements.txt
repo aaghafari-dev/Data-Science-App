@@ -43,3 +43,7 @@ presidio-analyzer
 
 # Development/testing
 pytest>=8
+
+python-pptx
+
+psutil

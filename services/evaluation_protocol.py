@@ -1,3 +1,8 @@
+"""Module duty: Evaluation protocol.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 
 """Validation-strategy selection and integrity checks for professional analysis.
@@ -25,6 +30,10 @@ class ValidationPlan:
     group_column: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        """Perform the to dict operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         return {
             "strategy": self.strategy,
             "rationale": list(self.rationale),
@@ -40,6 +49,10 @@ class ValidationProtocolAdvisor:
 
     @classmethod
     def infer(cls, df: pd.DataFrame, target: str | None = None) -> ValidationPlan:
+        """Perform the infer operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         if df is None or df.empty:
             return ValidationPlan("random", ["No data were supplied."], ["Validation strategy cannot be inferred."])
         time_cols = list(df.select_dtypes(include=["datetime", "datetimetz"]).columns)
@@ -72,6 +85,10 @@ class ValidationProtocolAdvisor:
 
     @staticmethod
     def split(df: pd.DataFrame, target: str, plan: ValidationPlan, test_size: float = .2, seed: int = 42):
+        """Perform the split operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         if plan.strategy == "time" and plan.time_column and plan.time_column in df.columns:
             order = pd.to_datetime(df[plan.time_column], errors="coerce").sort_values().index
             ordered = df.loc[order]
@@ -89,6 +106,10 @@ class ValidationProtocolAdvisor:
 
     @staticmethod
     def audit(train_df: pd.DataFrame, test_df: pd.DataFrame, target: str | None = None, group_column: str | None = None) -> dict[str, Any]:
+        """Perform the audit operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         checks = []
         if train_df is None or test_df is None:
             return {"status": "blocked", "checks": [{"check": "datasets_present", "status": "fail"}]}

@@ -1,3 +1,8 @@
+"""Module duty: Monitoring.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -7,6 +12,10 @@ import pandas as pd
 class ModelMonitoring:
     @staticmethod
     def numeric_drift(reference: pd.DataFrame, current: pd.DataFrame) -> pd.DataFrame:
+        """Perform the numeric drift operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         rows=[]
         common=[c for c in reference.columns if c in current.columns]
         for c in common:
@@ -20,6 +29,10 @@ class ModelMonitoring:
 
     @staticmethod
     def categorical_drift(reference: pd.DataFrame, current: pd.DataFrame) -> pd.DataFrame:
+        """Perform the categorical drift operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         rows=[]
         for c in [x for x in reference.columns if x in current.columns]:
             if pd.api.types.is_numeric_dtype(reference[c]): continue
@@ -30,5 +43,9 @@ class ModelMonitoring:
 
     @staticmethod
     def summary(reference, current):
+        """Perform the summary operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         numeric=ModelMonitoring.numeric_drift(reference,current); categorical=ModelMonitoring.categorical_drift(reference,current)
         return {"numeric":numeric.to_dict("records"),"categorical":categorical.to_dict("records"),"review_count":int((numeric.get("status",pd.Series(dtype=str))=="review").sum()) + int((categorical.get("status",pd.Series(dtype=str))=="review").sum())}

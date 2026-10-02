@@ -1,3 +1,8 @@
+"""Module duty: Statistical analysis.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -8,16 +13,28 @@ import numpy as np
 class StatisticalAnalysisEngine:
     @staticmethod
     def describe(df: pd.DataFrame) -> dict[str, Any]:
+        """Perform the describe operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         num = df.select_dtypes(include=[np.number])
         return {"rows": len(df), "columns": len(df.columns), "numeric_summary": num.describe().to_dict(),
                 "missing_pct": (100*df.isna().mean()).round(2).to_dict()}
 
     @staticmethod
     def correlation(df: pd.DataFrame, method: str = "pearson") -> pd.DataFrame:
+        """Perform the correlation operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         return df.select_dtypes(include=[np.number]).corr(method=method)
 
     @staticmethod
     def hypothesis(df: pd.DataFrame, group_col: str, value_col: str) -> dict[str, Any]:
+        """Perform the hypothesis operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         from scipy import stats
         groups = [g[value_col].dropna().to_numpy(float) for _, g in df.groupby(group_col)]
         groups = [g for g in groups if len(g) >= 2]
@@ -31,6 +48,10 @@ class StatisticalAnalysisEngine:
 
     @staticmethod
     def regression(df: pd.DataFrame, x: str, y: str) -> dict[str, Any]:
+        """Perform the regression operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         from scipy.stats import linregress
         work = df[[x,y]].apply(pd.to_numeric, errors="coerce").dropna()
         if len(work) < 3: raise ValueError("Need at least three paired observations.")

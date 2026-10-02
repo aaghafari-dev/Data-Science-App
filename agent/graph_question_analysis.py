@@ -1,3 +1,8 @@
+"""Module duty: Graph question analysis.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 from typing import Any, TypedDict
 import pandas as pd
@@ -10,6 +15,10 @@ class QuestionState(TypedDict, total=False):
     suggested_target: str; suggested_features: list; plan: list; memory: list[dict[str,Any]]; status: str; summary: str
 
 def _understand(s):
+    """Perform the understand operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     df=s.get("dataframe")
     rec=recommend_targets_and_features(df)
     q=s.get("question","")

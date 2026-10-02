@@ -1,273 +1,185 @@
-# Data Science Studio Pro 
-Professional desktop data-analysis software for Windows.
+# Data Science Studio Pro V20.5
 
-## 
+## Professional AI-assisted data analysis platform
 
-strengthens the application around five principles:
+Data Science Studio Pro is designed around an evidence-first workflow for senior Data Scientists. The central intelligence layer is **Agent Data Scientist**, the Master Agent.
 
-1. **Trust** — do not accept a result merely because code executed successfully.
-2. **Evidence** — important conclusions must be traceable to analytical artifacts.
-3. **Method Selection** — choose methods according to the question, data structure and validation requirements.
-4. **Efficiency** — dry-run tools, estimate resources and avoid unnecessary recomputation.
-5. **Human Control** — every governed Agent Data Scientist stage requires explicit approval.
+The application separates:
 
-The existing GUI and layout are preserved.
+- LLM reasoning
+- LangGraph orchestration
+- analytical memory
+- deterministic typed tools
+- specialist Agents
+- human approval
+- evidence/provenance
+- visualization
+- report generation
+- presentation generation
 
-## Major  capabilities
+The main GUI/layout is preserved.
 
-### Agent Data Scientist
+## Master Agent
 
-LangGraph now coordinates:
+Agent Data Scientist follows:
 
-```text
-Plan
- → Critic
- → Self-Check
- → Human Approval
- → Validation
- → Human Approval
- → Preprocessing Review
- → Human Approval
- → Model Selection Review
- → Human Approval
- → Model Execution
- → Human Approval
- → Evaluation Review
- → Human Approval
- → Robustness Review
- → Human Approval
- → Diagnosis Review
- → Human Approval
- → Independent Verification
- → Human Approval
- → Stop Evaluator
-```
+`Question → Task → Methods → Validation → Approval → Specialist → Evidence → Evaluation → Verification → Stop/Continue`
 
-The Master Agent still contains exactly two internal specialist agents:
+It considers:
 
-- ML Agent
-- DL Agent
+- regression
+- classification
+- clustering
+- unsupervised learning
+- anomaly detection
+- time series
+- statistics
+- reinforcement learning
+- deep learning
+- CNN image analysis
 
-A rejection revises the current stage. Abort terminates safely.
+The Master Agent does not use dataset size as a standalone ML/DL decision rule.
 
-### Professional classification analysis
+## LangGraph + Memory + LLM
 
-The dedicated workspace implements:
+### LangGraph
+LangGraph is the workflow engine that carries analytical state between stages and human approval gates.
 
-- missing-value imputation
-- categorical encoding
-- fold-local scaling
-- optional PCA
-- k-fold validation
-- hyperparameter search
-- locked final test set
-- Logistic Regression
-- SVM
-- Random Forest
-- Decision Tree
-- KNN
-- Naive Bayes
-- Neural Network
-- optional XGBoost
-- optional LightGBM
-- confusion matrix
+### Memory
+
+**Working memory**: current task, state, evidence and approval status.
+
+**Session/project memory**: datasets, experiments, models, metrics, Sheets, Stories, reports and artifacts.
+
+**Specialist memory**: bounded context for each analytical specialist.
+
+### LLM
+The LLM provides bounded task/method review and narrative generation. Deterministic computation is delegated to typed analytical tools and specialist Agents.
+
+## Independent AI-provider selection
+
+The application supports independent LLM/API configuration for:
+
+- Agent Data Scientist
+- AI Agent Plot
+- AI Agent Report
+- AI Agent Presentation
+
+Each Agent checks its own provider immediately before execution through `AgentProviderRegistry`.
+
+This prevents a local model selected for one Agent from silently becoming the provider for another Agent.
+
+## CNN Image Analysis
+
+A new **Data Analysis → CNN Image Analysis** workspace provides a professional computer-vision workflow.
+
+### Workspace capabilities
+
+- ImageFolder dataset discovery
+- ResNet-18
+- ResNet-50
+- VGG-16
+- EfficientNet-B0
+- pretrained transfer learning
+- frozen backbone
+- last-block fine-tuning
+- full fine-tuning
+- image resizing
+- augmentation
+- class-balanced sampling
+- Adam / AdamW
+- learning-rate scheduling
+- early stopping
+- train/validation/test separation
 - accuracy
 - balanced accuracy
-- precision
-- recall
-- F1
-- ROC-AUC
-- PR-AUC
-- log loss
-- Brier score
-- calibration evidence
+- macro precision
+- macro recall
+- macro F1
+- confusion matrix
+- reproducibility metadata
+- JSON evidence export
+- explainability planning
 
-### Professional regression analysis
+The CNN specialist is also integrated into Agent Data Scientist through LangGraph, memory and the typed tool registry.
 
-Methods:
+## Sheets
 
-- OLS
-- Ridge
-- Lasso
-- Elastic Net
-- Polynomial Regression
-- SVR
-- Decision Tree
-- Random Forest
-- Gradient Boosting
-- Neural Network
-- optional XGBoost
-- optional LightGBM
+A Sheet is a reproducible analytical view, not simply an image.
 
-Metrics:
+A professional Sheet should retain:
 
-- MAE
-- RMSE
-- R²
-- median absolute error
-- mean bias error
-- MAPE where meaningful
+- dataset and version
+- Rows / Columns / Marks
+- filters
+- transformations
+- chart configuration
+- analytical evidence IDs
+- annotations
+- provenance
 
-### AI Agent Report
+## Story
 
-The Report Agent combines Agent Data Scientist evidence, Agent Plot visualizations and the selected LLM.
+Story is the human-curated presentation layer between analysis and final communication.
 
-The report includes professional analytical explanations and embeds Plotly visualizations into the PDF when the image-rendering backend is installed.
+Recommended flow:
 
-### AI Agent Presentation
+`Dataset → Analysis → Result → Sheet → Story Point → Report / Presentation`
 
-DataFrames are converted into bounded JSON/msgpack-safe evidence summaries before presentation generation. This prevents the previous:
+Story Points can contain selected Sheets, titles, analytical explanations, evidence references and speaker notes. Sheet cards remain movable/resizable.
 
-```text
-Type is not msgpack serializable: DataFrame
+## Professional Report
+
+The AI Agent Report follows:
+
+`Evidence → Audit → Report Planner → Narrative Engine → Output QA → PDF`
+
+The report should contain coherent sections rather than concatenated metric sentences:
+
+1. Executive Summary
+2. Analytical Objective
+3. Data & Governance
+4. Methodology
+5. Validation
+6. Results
+7. Robustness
+8. Visual Findings
+9. Discussion
+10. Limitations
+11. Conclusion
+12. Recommendations
+13. Reproducibility
+
+## Professional Presentation
+
+The Presentation Agent follows:
+
+`Evidence + Story → Slide Planner → One Message per Slide → Visual Layout → Speaker Notes → PPTX QA`
+
+A slide should answer one analytical question, give visual evidence priority, use concise visible text and retain detailed interpretation in speaker notes.
+
+## Evidence chain
+
+The intended provenance chain is:
+
+`Dataset → Transformation → Method → Validation → Result → Figure → Sheet → Story → Report/Presentation`
+
+This makes analytical communication traceable to the underlying evidence.
+
+## Startup compatibility fix
+
+V20.5 explicitly imports:
+
+```python
+from services.agent_provider_registry import AgentProviderRegistry, DEFAULT_AGENTS
 ```
 
-failure.
+This fixes the startup error:
 
-### Tableau-like Rows / Columns aggregation
+`NameError: name 'AgentProviderRegistry' is not defined`
 
-Right-click a field on Rows or Columns to choose:
+The Story graphics item also uses Qt6-compatible `event.pos()` rather than `QGraphicsSceneMouseEvent.position()`.
 
-- Automatic
-- Sum
-- Average
-- Count
-- Minimum
-- Maximum
-- Median
-- Count Distinct
-- Remove
+## Validation
 
-### Tableau-like Marks
-
-Clear now clears the actual internal field selection.
-
-Categorical Color creates a legend showing the meaning of each color.
-
-### Sheets and Stories
-
-The professional workspace supports:
-
-- New Sheet
-- Duplicate
-- Rename
-- Delete
-- activate a sheet
-- select plotted sheets for a Story
-- reorder story sheets
-- explanatory story text
-- Story preview
-- Story PNG export
-- Story PDF export
-
-### Professional Help Center
-
-Help now includes:
-
-- Quick Start
-- Rows / Columns / Aggregation
-- Marks
-- Classification Analysis
-- Regression Analysis
-- Agent Data Scientist
-- AI Agent Report
-- Sheets and Stories
-- Voice / Accessibility
-- CPU / GPU
-- Troubleshooting
-- Reproducibility
-
-### Voice
-
-Voice is opt-in. Accessibility → Start Voice Command opens a dedicated control panel.
-
-Only unambiguous commands can control an approval gate:
-
-- approve
-- reject
-- pause
-- abort
-
-Ambiguous speech never approves a step.
-
-### Compute
-
-The compute policy distinguishes:
-
-- physical NVIDIA hardware
-- driver availability
-- PyTorch CUDA build
-- architecture compatibility
-- CUDA runtime initialization
-- VRAM/resource limits
-
-CPU+GPU is opportunistic. GPU mode is strict. Low-VRAM devices such as a 2 GB MX250 are protected by bounded execution policies.
-
-## Reproducibility
-
-The application records, where applicable:
-
-- dataset fingerprint
-- data contract
-- target/feature decisions
-- validation protocol
-- model configuration
-- random seeds
-- agent decisions
-- approval evidence
-- artifacts
-- evidence DAG
-- Analysis Recipe
-- model/experiment registry information
-
-The final test partition is not used for model selection or hyperparameter tuning.
-
-## Running
-
-```powershell
-py -3.11 .\main.py
-```
-
-
-
-Skipped tests are optional integrations when LangGraph/LangChain is not installed in the lightweight validation environment.
-
-## Optional packages
-
-For extended functionality consider:
-
-- `xgboost`
-- `lightgbm`
-- `kaleido` — Plotly static-image export for professional PDF reports
-- `mlflow`
-- `optuna`
-- `shap`
-- `statsmodels`
-- `ydata-profiling`
-
-## Design policy
-
-The application is intended for a high-level data-analysis user. Automation must not replace methodological judgment. The software therefore favors:
-
-- explicit validation
-- independent verification
-- uncertainty
-- robustness
-- evidence traceability
-- human approval
-- reproducibility
-
-over opaque automatic conclusions.
-
-## Recommended next development priorities
-
-1. Conformal prediction with explicit coverage validation.
-2. Group-aware and temporal nested cross-validation in the dedicated supervised workspaces.
-3. Data-slice discovery with statistical multiplicity controls.
-4. Feature provenance graphs from raw source through transformed model input.
-5. Automatic residual diagnostics and influence analysis.
-6. Experiment-level cost/performance/uncertainty frontiers.
-7. Agent stopping criteria based on information gain rather than only step count.
-8. Parallel execution of independent diagnostics under a governed resource budget.
-9. Deployment simulation: batch inference, latency, memory and drift rehearsal.
-10. Scientific report claim-to-evidence verification before publication export.
+The V20.5 source was compiled with `python -m compileall` and the full automated test suite passes.

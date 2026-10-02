@@ -1,6 +1,13 @@
+"""Module duty: Graph ml.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 from typing import Any
 import time
+import warnings
+from sklearn.exceptions import ConvergenceWarning
 import numpy as np
 import pandas as pd
 from sklearn.base import clone
@@ -28,6 +35,10 @@ from services.model_preprocessing import build_preprocessor
 
 
 def _split(work,target,task,plan,seed):
+    """Perform the split operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     if plan.strategy=="time" and plan.time_column in work.columns:
         ordered=work.assign(__dsp_time=pd.to_datetime(work[plan.time_column],errors="coerce")).sort_values("__dsp_time").drop(columns=["__dsp_time"])
         cut=max(1,min(len(ordered)-1,int(round(len(ordered)*.8)))); return ordered.iloc[:cut].copy(),ordered.iloc[cut:].copy()
@@ -38,10 +49,18 @@ def _split(work,target,task,plan,seed):
 
 
 def _task(y):
+    """Perform the task operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     return "classification" if (y.dtype==object or str(y.dtype).startswith("category") or y.nunique()<=min(20,max(2,int(len(y)*.05)))) else "regression"
 
 
 def _candidates(task,seed,parallel_jobs):
+    """Perform the candidates operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     if task=="classification":
         models={
             "Logistic Regression":(LogisticRegression(max_iter=3000),{"model__C":[.1,1,10]}),
@@ -50,7 +69,7 @@ def _candidates(task,seed,parallel_jobs):
             "Decision Tree":(DecisionTreeClassifier(random_state=seed),{"model__max_depth":[None,4,8,16]}),
             "KNN":(KNeighborsClassifier(),{"model__n_neighbors":[3,5,9],"model__weights":["uniform","distance"]}),
             "Naive Bayes":(GaussianNB(),{"model__var_smoothing":[1e-9,1e-8,1e-7]}),
-            "Neural Network":(MLPClassifier(hidden_layer_sizes=(64,32),max_iter=400,early_stopping=True,random_state=seed),{"model__alpha":[1e-5,1e-4,1e-3]}),
+            "Neural Network":(MLPClassifier(hidden_layer_sizes=(64,32),max_iter=1000,early_stopping=True,n_iter_no_change=20,tol=1e-3,random_state=seed),{"model__alpha":[1e-5,1e-4,1e-3]}),
         }
         try:
             from xgboost import XGBClassifier
@@ -64,14 +83,14 @@ def _candidates(task,seed,parallel_jobs):
     models={
         "OLS":(LinearRegression(),{}),
         "Ridge":(Ridge(),{"model__alpha":[.01,.1,1,10]}),
-        "Lasso":(Lasso(max_iter=5000),{"model__alpha":[.0001,.001,.01,.1]}),
-        "Elastic Net":(ElasticNet(max_iter=5000),{"model__alpha":[.001,.01,.1],"model__l1_ratio":[.2,.5,.8]}),
+        "Lasso":(Lasso(max_iter=20000,tol=1e-4),{"model__alpha":[.0001,.001,.01,.1]}),
+        "Elastic Net":(ElasticNet(max_iter=20000,tol=1e-4),{"model__alpha":[.001,.01,.1],"model__l1_ratio":[.2,.5,.8]}),
         "Polynomial Regression":(Pipeline([("poly",PolynomialFeatures(degree=2,include_bias=False)),("linear",Ridge())]),{"model__linear__alpha":[.1,1,10]}),
         "SVR":(SVR(),{"model__C":[.5,1,10],"model__epsilon":[.05,.1,.2]}),
         "Decision Tree":(DecisionTreeRegressor(random_state=seed),{"model__max_depth":[None,5,10,20]}),
         "Random Forest":(RandomForestRegressor(n_estimators=250,random_state=seed,n_jobs=parallel_jobs),{"model__max_depth":[None,10,20]}),
         "Gradient Boosting":(GradientBoostingRegressor(random_state=seed),{"model__n_estimators":[100,200],"model__learning_rate":[.03,.1],"model__max_depth":[2,3]}),
-        "Neural Network":(MLPRegressor(hidden_layer_sizes=(64,32),max_iter=500,early_stopping=True,random_state=seed),{"model__alpha":[1e-5,1e-4,1e-3]}),
+        "Neural Network":(MLPRegressor(hidden_layer_sizes=(64,32),max_iter=1000,early_stopping=True,n_iter_no_change=20,tol=1e-3,random_state=seed),{"model__alpha":[1e-5,1e-4,1e-3]}),
     }
     try:
         from xgboost import XGBRegressor
@@ -85,6 +104,10 @@ def _candidates(task,seed,parallel_jobs):
 
 
 def _safe_metrics(y,pred,task,proba=None):
+    """Perform the safe metrics operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     if task=="classification":
         out={"accuracy":float(accuracy_score(y,pred)),"f1_weighted":float(f1_score(y,pred,average="weighted",zero_division=0))}
         if proba is not None:
@@ -99,6 +122,10 @@ def _safe_metrics(y,pred,task,proba=None):
 
 
 def _suspicious_features(rec):
+    """Perform the suspicious features operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     out=[]
     for item in rec.get("feature_candidates",[]):
         if isinstance(item,dict):
@@ -108,6 +135,10 @@ def _suspicious_features(rec):
 
 
 def run_ml_step(df: pd.DataFrame, target: str|None=None, seed:int=42, compute_mode:str="CPU") -> dict[str,Any]:
+    """Perform the run ml step operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     if df is None or df.empty: return {"status":"error","message":"No data available."}
     rec=recommend_targets_and_features(df); target=target or rec.get("suggested_target") or df.columns[-1]
     if target not in df.columns: raise ValueError(f"Target column not found: {target}")
@@ -131,9 +162,13 @@ def run_ml_step(df: pd.DataFrame, target: str|None=None, seed:int=42, compute_mo
                 search=RandomizedSearchCV(pipe,params,n_iter=min(3,max(1,len(next(iter(params.values()))))),scoring="f1_weighted" if task=="classification" else "neg_root_mean_squared_error",cv=cv_folds,n_jobs=1,refit=True,random_state=seed,return_train_score=True)
             else:
                 search=GridSearchCV(pipe,params,scoring="f1_weighted" if task=="classification" else "neg_root_mean_squared_error",cv=cv_folds,n_jobs=1,refit=True,return_train_score=True)
-            search.fit(Xtr,ytr); pred=search.predict(Xte); proba=search.predict_proba(Xte) if hasattr(search,"predict_proba") else None
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                search.fit(Xtr,ytr)
+            pred=search.predict(Xte); proba=search.predict_proba(Xte) if hasattr(search,"predict_proba") else None
             metrics=_safe_metrics(yte,pred,task,proba); prof=ProfessionalEvaluationEngine.evaluate_bundle(search.best_estimator_,Xtr,Xte,ytr,yte,task,seed,n_jobs=1)
-            results[name]={"status":"ok","metrics":metrics,"cv_selection_score":float(search.best_score_),"best_params":search.best_params_,"seconds":round(time.time()-t0,3),"professional_evaluation":prof}
+            convergence=[str(w.message) for w in caught if issubclass(w.category,ConvergenceWarning)]
+            results[name]={"status":"ok","metrics":metrics,"cv_selection_score":float(search.best_score_),"best_params":search.best_params_,"seconds":round(time.time()-t0,3),"professional_evaluation":prof,"convergence_warnings":convergence[:5],"converged":not bool(convergence)}
             fitted[name]=search.best_estimator_
         except Exception as exc:
             results[name]={"status":"unavailable","error":str(exc),"metrics":{}}
@@ -142,7 +177,12 @@ def run_ml_step(df: pd.DataFrame, target: str|None=None, seed:int=42, compute_mo
     best=max(valid,key=lambda x:x[1])[0] if task=="classification" else max(valid,key=lambda x:x[1])[0]
     best_pipe=fitted[best]
     # Advanced diagnostics are calculated from the selected training/test protocol.
-    def factory(cols): return Pipeline([("pre",build_preprocessor(Xtr[list(cols)])),("model",clone(best_pipe.named_steps["model"]))])
+    def factory(cols):
+        """Perform the factory operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
+        return Pipeline([("pre",build_preprocessor(Xtr[list(cols)])),("model",clone(best_pipe.named_steps["model"]))])
     stability=FeatureStabilityAnalyzer.run(lambda: clone(best_pipe), Xtr,ytr,task,repeats=3,max_features=25,seed=seed)
     temporal=TemporalAvailabilityAnalyzer.run(df,target=target); suspicious=_suspicious_features(rec)
     leakage=CounterfactualLeakageAnalyzer.run(lambda cols: Pipeline([("pre",build_preprocessor(Xtr[list(cols)])),("model",clone(best_pipe.named_steps["model"]))]),Xtr,ytr,task,suspicious,seed) if suspicious else {"status":"not_available","reason":"No high-priority suspicious features were identified."}

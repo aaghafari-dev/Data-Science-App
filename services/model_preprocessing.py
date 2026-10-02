@@ -1,3 +1,8 @@
+"""Module duty: Model preprocessing.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 
 import numpy as np
@@ -9,10 +14,18 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler, FunctionTransfo
 
 
 def _to_string(x):
+    """Perform the to string operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     return pd.DataFrame(x).astype(str).to_numpy()
 
 
 def _datetime_to_numeric(x):
+    """Perform the datetime to numeric operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     frame = pd.DataFrame(x).copy()
     out = pd.DataFrame(index=frame.index)
     for c in frame.columns:

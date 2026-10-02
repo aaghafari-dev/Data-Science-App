@@ -1,0 +1,4 @@
+Data Science Studio Pro
+Version: V20.5.1
+Date: 2026-10-02
+Maintenance: CNN Image Analysis workspace and Master-Agent specialist integration; AgentProviderRegistry startup fix; evidence/report/presentation integration; Qt6 Story mouse-event compatibility; professional architecture documentation.

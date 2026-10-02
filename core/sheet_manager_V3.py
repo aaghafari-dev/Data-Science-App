@@ -1,13 +1,26 @@
+"""Module duty: Sheet manager V3.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 import streamlit as st
 
 class SheetManager:
     def __init__(self):
+        """Perform the init operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         if 'sheets' not in st.session_state:
             st.session_state.sheets = {}
         if 'active_sheet' not in st.session_state:
             st.session_state.active_sheet = "Sheet 1"
 
     def create_sheet(self, name):
+        """Perform the create sheet operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         st.session_state.sheets[name] = {
             'x_col': None,
             'y_col': None,
@@ -18,13 +31,25 @@ class SheetManager:
         }
 
     def get_sheet_config(self, name):
+        """Perform the get sheet config operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         return st.session_state.sheets.get(name, {})
 
     def update_sheet_config(self, name, key, value):
+        """Perform the update sheet config operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         if name in st.session_state.sheets:
             st.session_state.sheets[name][key] = value
 
     def get_all_sheets(self):
+        """Perform the get all sheets operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         return list(st.session_state.sheets.keys())
 
     def render_dashboard(self, df, viz_engine):

@@ -1,3 +1,8 @@
+"""Module duty: Semantic types.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 
 import pandas as pd
@@ -16,6 +21,10 @@ def classify_dtype(series: pd.Series) -> str:
 
 
 def schema_table(df: pd.DataFrame) -> pd.DataFrame:
+    """Perform the schema table operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     rows = []
     for c in df.columns:
         rows.append({

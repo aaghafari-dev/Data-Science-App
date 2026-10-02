@@ -1,3 +1,8 @@
+"""Module duty: Data contracts.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -8,6 +13,10 @@ from .semantic_types import classify_dtype
 
 
 def _now():
+    """Perform the now operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     return datetime.now(timezone.utc).isoformat()
 
 
@@ -16,6 +25,10 @@ class DataContractEngine:
 
     @staticmethod
     def build(df: pd.DataFrame, name: str = "Dataset Contract") -> dict[str, Any]:
+        """Perform the build operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         return {
             "name": name,
             "created_at": _now(),
@@ -33,6 +46,10 @@ class DataContractEngine:
 
     @staticmethod
     def validate(df: pd.DataFrame, contract: dict[str, Any]) -> dict[str, Any]:
+        """Perform the validate operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         expected = contract.get("columns", {})
         actual = {str(c): c for c in df.columns}
         missing = sorted(set(expected) - set(actual))
@@ -62,6 +79,10 @@ class DataContractEngine:
 
     @staticmethod
     def drift_report(reference: pd.DataFrame, current: pd.DataFrame) -> dict[str, Any]:
+        """Perform the drift report operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         contract = DataContractEngine.build(reference, "Reference Contract")
         result = DataContractEngine.validate(current, contract)
         result["reference_rows"] = int(len(reference)); result["current_rows"] = int(len(current))
@@ -70,10 +91,18 @@ class DataContractEngine:
 
     @staticmethod
     def save(path, contract):
+        """Perform the save operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         from pathlib import Path
         Path(path).write_text(json.dumps(contract, indent=2, ensure_ascii=False), encoding="utf-8")
 
     @staticmethod
     def load(path):
+        """Perform the load operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         from pathlib import Path
         return json.loads(Path(path).read_text(encoding="utf-8"))

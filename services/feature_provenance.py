@@ -1,3 +1,8 @@
+"""Module duty: Feature provenance.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -9,6 +14,10 @@ class FeatureProvenanceEngine:
     """Create a lightweight auditable feature lineage and availability record."""
     @staticmethod
     def build(df: pd.DataFrame, target: str | None = None, approved_features: list[str] | None = None) -> dict[str, Any]:
+        """Perform the build operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         if df is None:
             return {"status": "insufficient_data"}
         rows = []

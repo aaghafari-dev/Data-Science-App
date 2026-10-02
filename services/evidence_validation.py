@@ -1,3 +1,8 @@
+"""Module duty: Evidence validation.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -7,6 +12,10 @@ class EvidenceValidator:
     """Validate that evidence objects and report-facing claims are traceable."""
     @staticmethod
     def validate(evidence: list[dict[str, Any]], required_kinds: list[str] | None = None) -> dict[str, Any]:
+        """Perform the validate operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         ids = {x.get("evidence_id") for x in evidence if x.get("evidence_id")}
         checks = []
         missing_parent = []

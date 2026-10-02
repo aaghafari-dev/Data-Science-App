@@ -1,3 +1,8 @@
+"""Module duty: Feature set analysis.
+
+This module provides the implementation used by Data Science Studio Pro for its named component and preserves evidence-bound, testable application behaviour.
+"""
+
 from __future__ import annotations
 
 from typing import Any, Callable
@@ -7,6 +12,10 @@ from sklearn.base import clone
 
 
 def _primary(y, pred, task):
+    """Perform the primary operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
     from sklearn.metrics import f1_score, r2_score
     if task == "classification": return float(f1_score(y,pred,average="weighted",zero_division=0))
     return float(r2_score(y,pred))
@@ -16,6 +25,10 @@ class FeatureSetChallenge:
     """Compare scientifically defensible feature sets under the same locked split."""
     @staticmethod
     def run(pipeline_factory: Callable[[list[str]], Any], X_train: pd.DataFrame, X_test: pd.DataFrame, y_train, y_test, task: str, stable_features: list[str] | None = None, suspicious_features: list[str] | None = None) -> dict[str, Any]:
+        """Perform the run operation for this component.
+
+The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
+"""
         if X_train is None or X_train.empty:
             return {"status":"insufficient_data"}
         all_features=list(X_train.columns)
