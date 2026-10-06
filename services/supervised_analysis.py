@@ -43,6 +43,7 @@ from sklearn.ensemble import (
     GradientBoostingRegressor, HistGradientBoostingClassifier, HistGradientBoostingRegressor,
 )
 from sklearn.neural_network import MLPClassifier, MLPRegressor
+from services.mlp_training import make_mlp, fit_search_with_convergence_audit, MLPPolicy
 
 
 @dataclass
@@ -214,7 +215,7 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
             "Decision Tree": (DecisionTreeClassifier(random_state=seed), {"model__max_depth": [None, 4, 8, 16]}),
             "KNN": (KNeighborsClassifier(), {"model__n_neighbors": [3, 5, 9], "model__weights": ["uniform", "distance"]}),
             "Naive Bayes": (GaussianNB(), {"model__var_smoothing": [1e-9, 1e-8, 1e-7]}),
-            "Neural Network": (MLPClassifier(hidden_layer_sizes=(64, 32), max_iter=1000, early_stopping=True, n_iter_no_change=20, tol=1e-3, random_state=seed), {"model__alpha": [1e-5, 1e-4, 1e-3]}),
+            "Neural Network": (make_mlp("classification", seed), {"model__alpha": [1e-5, 1e-4, 1e-3]}),
         }
         try:
             from xgboost import XGBClassifier
@@ -230,7 +231,7 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
             pipe = Pipeline(pre_steps + [("model", est)])
             t0 = time.time()
             searcher = GridSearchCV(pipe, params, scoring="f1_weighted", cv=cv, n_jobs=1, refit=True, return_train_score=True)
-            searcher.fit(Xtr, ytr_encoded)
+            convergence = fit_search_with_convergence_audit(searcher, Xtr, ytr_encoded)
             pred_encoded = searcher.predict(Xte)
             pred = label_encoder.inverse_transform(np.asarray(pred_encoded, dtype=int))
             proba = searcher.predict_proba(Xte) if hasattr(searcher, "predict_proba") else None
@@ -240,6 +241,7 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
                 "best_params": searcher.best_params_,
                 "fit_seconds": round(time.time() - t0, 3),
                 "estimator": searcher.best_estimator_,
+                "convergence": convergence,
             }
         best = max(results, key=lambda k: results[k]["cv_best_score"])
         screening = _feature_screening(df, target)
@@ -284,7 +286,7 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
             "Decision Tree": (DecisionTreeRegressor(random_state=seed), {"model__max_depth": [None, 5, 10, 20]}),
             "Random Forest": (RandomForestRegressor(n_estimators=250, random_state=seed, n_jobs=1), {"model__max_depth": [None, 10, 20]}),
             "Gradient Boosting": (GradientBoostingRegressor(random_state=seed), {"model__n_estimators": [100, 200], "model__learning_rate": [.03, .1], "model__max_depth": [2, 3]}),
-            "Neural Network": (MLPRegressor(hidden_layer_sizes=(64, 32), max_iter=500, early_stopping=True, random_state=seed), {"model__alpha": [1e-5, 1e-4, 1e-3]}),
+            "Neural Network": (make_mlp("regression", seed), {"model__alpha": [1e-5, 1e-4, 1e-3]}),
         }
         try:
             from xgboost import XGBRegressor
@@ -301,9 +303,9 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
             pipe = Pipeline([("pre", pre), ("model", est)])
             t0 = time.time()
             searcher = GridSearchCV(pipe, params, scoring="neg_root_mean_squared_error", cv=cv, n_jobs=1, refit=True, return_train_score=True)
-            searcher.fit(Xtr, ytr)
+            convergence = fit_search_with_convergence_audit(searcher, Xtr, ytr)
             pred = searcher.predict(Xte)
-            results[name] = {"metrics": _regression_metrics(yte, pred), "cv_best_score": float(searcher.best_score_), "best_params": searcher.best_params_, "fit_seconds": round(time.time()-t0,3), "estimator": searcher.best_estimator_}
+            results[name] = {"metrics": _regression_metrics(yte, pred), "cv_best_score": float(searcher.best_score_), "best_params": searcher.best_params_, "fit_seconds": round(time.time()-t0,3), "estimator": searcher.best_estimator_, "convergence": convergence}
         best = min(results, key=lambda k: results[k]["metrics"]["rmse"])
         screening = _feature_screening(df, target)
         return {

@@ -33,6 +33,8 @@ class ReportState(TypedDict, total=False):
     model_name: str
     llm_provider: str
     local_path: str
+    ram_gb: float | None
+    gpu_vram_gb: float | None
     pdf_buffer: io.BytesIO
     report_text: str
     report_plan: dict[str, Any]
@@ -55,70 +57,77 @@ def _audit_evidence(evidence):
 
 
 def _fallback_report(evidence):
-    """Perform the fallback report operation for this component.
-
-The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
-"""
-    target=evidence.get("target","not recorded"); route=evidence.get("master_route","not recorded")
-    ml=evidence.get("ML Agent") or {}; dl=evidence.get("DL Agent") or {}; cnn=evidence.get("CNN Image Analysis Agent") or {}; plot=evidence.get("Plot Agent") or {}
+    """Create a coherent executive-quality report without dumping raw JSON into the main narrative."""
+    target=evidence.get("target") or "not recorded"; route=evidence.get("master_route") or "exploratory analysis"
+    ml=evidence.get("ML Agent") or {}; dl=evidence.get("DL Agent") or {}; cnn=evidence.get("CNN Image Analysis Agent") or {}
+    plot=evidence.get("Plot Agent") or {}; leakage=evidence.get("leakage_gate") or {}; validation=evidence.get("validation_strategy") or {}
+    card=evidence.get("dataset_card") or {}
+    plots=plot.get("plots",[]) if isinstance(plot,dict) else []
+    def metric_sentence(bundle, label):
+        best=bundle.get("best_model") or bundle.get("best_model_name")
+        metrics=bundle.get("best_metrics") or bundle.get("metrics") or {}
+        if not isinstance(metrics,dict): metrics={}
+        selected=[]
+        preferred=("R2","RMSE","MAE","accuracy","balanced_accuracy","f1_macro","f1_weighted","precision_macro","recall_macro")
+        for k in preferred:
+            if k in metrics: selected.append(f"{k}={metrics[k]}")
+        if not selected:
+            for k,v in list(metrics.items())[:4]: selected.append(f"{k}={v}")
+        if best: return f"{label} selected {best} as the recorded best candidate, with " + ", ".join(selected) + "."
+        return f"{label} produced recorded evidence, but no best-model designation was available in the supplied state."
+    def dataset_sentence():
+        if not isinstance(card,dict): return "The dataset card was not available in structured form."
+        rows=card.get("rows") or card.get("n_rows") or "not recorded"; cols=card.get("columns") or card.get("n_columns") or "not recorded"
+        return f"The active dataset contains approximately {rows} rows and {cols} columns according to the recorded dataset card. Interpretation is conditional on the observed sample, feature availability and provenance."
+    leak_status=leakage.get("status","not recorded") if isinstance(leakage,dict) else "not recorded"
+    val_name=validation.get("protocol") or validation.get("strategy") or validation.get("name") or "the recorded validation protocol"
     lines=[
         "1. Executive Summary",
-        f"The governed analysis evaluated target '{target}' using the Master Agent route '{route}'. This report is restricted to recorded analytical evidence and explicitly documented human approvals.",
+        f"The governed analysis addressed the analytical objective for target '{target}' using the Master Agent route '{route}'. The workflow separated task identification, validation design, specialist execution and evidence review, with human approval gates retained in the project record. The principal findings below are limited to the evidence actually produced by the application.",
         "",
-        "2. Introduction and Analytical Objective",
-        "The objective was to evaluate the predictive structure of the supplied dataset using leakage-aware preprocessing, training-only model selection, locked-test evaluation and diagnostic analysis. The report distinguishes observed measurements from interpretation.",
+        "2. Analytical Objective and Scope",
+        f"The objective was to determine the most defensible analytical strategy for the active dataset and to communicate the resulting evidence without exceeding what the data and validation design support. The selected route was {route}. This report is an analytical record, not a causal or deployment guarantee.",
         "",
-        "3. Data and Governance",
-        f"Dataset card: {json.dumps(evidence.get('dataset_card',{}),default=str)[:7000]}",
-        f"Leakage gate: {json.dumps(evidence.get('leakage_gate',{}),default=str)[:5000]}",
-        f"Target/feature analysis: {json.dumps(evidence.get('target_feature_analysis',{}),default=str)[:7000]}",
+        "3. Data, Governance and Leakage Control",
+        dataset_sentence(),
+        f"The Scientific Data Leakage Gate recorded status '{leak_status}'. Predictors are expected to be evaluated for target derivation, future-information availability, duplicate/overlap structure and identifier-like behaviour before model selection. The final interpretation should therefore retain the recorded leakage assessment and any unresolved review flags.",
         "",
-        "4. Methods and Validation",
-        f"ML validation protocol: {json.dumps(ml.get('validation_protocol',{}),default=str)[:7000]}",
-        f"DL validation protocol: {json.dumps(dl.get('validation_protocol',{}),default=str)[:7000]}",
-        "All reported model-selection procedures are intended to use training-only validation. The final test partition is reserved for generalisation assessment.",
+        "4. Methodology and Validation",
+        f"The Master Agent evaluated candidate methods before specialist execution. Validation was treated as an analytical design decision; the recorded protocol was {val_name}. Model selection and preprocessing are intended to remain separated from the final evaluation data, with robustness and diagnostic evidence considered separately from primary performance.",
         "",
         "5. Results",
-        f"ML Agent: {ml.get('summary','No ML result recorded.')}",
-        f"ML best model: {ml.get('best_model','not recorded')}; metrics: {json.dumps(ml.get('best_metrics',{}),default=str)}",
-        f"DL Agent: {dl.get('summary','No DL result recorded.')}",
-        f"CNN Image Analysis Agent: {cnn.get('status','No CNN result recorded.')}; metrics: {json.dumps(cnn.get('metrics',{}),default=str)}",
-        f"DL best model: {dl.get('best_model','not recorded')}; metrics: {json.dumps(dl.get('best_metrics',{}),default=str)}",
+        metric_sentence(ml,"The ML analysis") if ml else "No ML result was recorded.",
+        metric_sentence(dl,"The DL analysis") if dl else "No conventional DL result was recorded.",
+        (f"The CNN Image Analysis Agent recorded status '{cnn.get('status','not recorded')}' with metrics {', '.join(f'{k}={v}' for k,v in list((cnn.get('metrics') or {}).items())[:6])}." if cnn else "No CNN image-analysis result was recorded."),
         "",
-        "6. Evaluation, Uncertainty and Robustness",
-        f"ML evaluation: {json.dumps(ml.get('evaluation',{}),default=str)[:12000]}",
-        f"DL evaluation: {json.dumps(dl.get('evaluation',{}),default=str)[:12000]}",
-        f"ML feature stability: {json.dumps(ml.get('feature_stability',{}),default=str)[:7000]}",
-        f"ML temporal availability: {json.dumps(ml.get('temporal_availability',{}),default=str)[:7000]}",
-        f"ML counterfactual leakage: {json.dumps(ml.get('counterfactual_leakage',{}),default=str)[:7000]}",
-        f"Model diagnosis: {json.dumps(ml.get('model_diagnosis',{}),default=str)[:7000]}",
+        "6. Robustness, Uncertainty and Diagnostics",
+        "Primary performance was interpreted separately from robustness. Feature stability, temporal-availability checks, counterfactual leakage tests, model diagnosis and perturbation evidence should be read as information about where the observed result may change. They do not constitute a guarantee of future performance.",
         "",
-        "7. Visual Results",
-        f"Agent Plot generated {len(plot.get('plots',[]) if isinstance(plot,dict) else [])} evidence-linked visualizations.",
+        "7. Visual Findings",
+        f"The Plot Agent produced {len(plots)} evidence-linked visualization(s). Each visualization is treated as a communication view of recorded analytical evidence. Associations are descriptive unless an appropriate inferential design supports a stronger claim.",
     ]
-    if isinstance(plot,dict):
-        for p in plot.get("plots",[]):
-            lines.append(f"• {p.get('title')} — quantity: {p.get('quantity')}; fields: {p.get('fields')}; rationale: {p.get('rationale')}; findings: {p.get('insights',[])}")
+    for pitem in plots:
+        if not isinstance(pitem,dict): continue
+        title=pitem.get("title") or "Untitled visualization"; fields=pitem.get("fields") or []
+        insight=" ".join(str(x) for x in (pitem.get("insights") or []) if x)
+        lines.append(f"• {title}: fields={', '.join(map(str,fields))}. {insight or pitem.get('rationale','Evidence-linked visualization supporting the recorded analysis.')}")
     lines += [
         "",
         "8. Discussion",
-        "The recorded results should be interpreted in the context of the observed dataset, target definition, feature availability and validation strategy. Associations in exploratory plots do not establish causality. Prediction uncertainty and robustness diagnostics are evidence about model behaviour, not guarantees of future performance.",
+        "Taken together, the recorded evidence supports interpretation of the selected analytical task under the observed dataset and validation design. The application deliberately distinguishes observed relationships and predictive behaviour from causal explanations. Domain knowledge remains necessary to determine whether the observed patterns are scientifically or operationally meaningful.",
         "",
-        "9. Conclusion",
-        "The analysis reached the conclusions supported by the recorded model metrics, validation evidence, diagnostics and visualizations. Any deployment or scientific interpretation beyond this evidence requires additional domain and operational review.",
+        "9. Limitations and Open Questions",
+        "The principal limitations are the observed sample, feature availability, validation assumptions, model specification, unresolved evidence gaps and the distinction between predictive association and causal explanation. Any decision beyond these boundaries requires additional domain, experimental or operational evidence.",
         "",
         "10. Recommendations and Next Checks",
-        "• Review unresolved model-diagnosis flags before deployment.\n• Reassess feature availability under the intended prediction timestamp.\n• Monitor production drift and subgroup performance.\n• Preserve the analysis recipe, model card, dataset card and evidence DAG with the delivered model.",
+        "1. Review every unresolved leakage, validation and model-diagnostic flag before external use.\n2. Confirm that all predictors would be available at the intended decision time.\n3. Compare the selected model against a transparent baseline and an appropriate challenger where justified.\n4. Preserve dataset, analysis recipe, model/evidence versions and approval records.\n5. For scientific or high-impact decisions, perform independent domain validation before deployment or causal interpretation.",
         "",
         "11. Human Oversight and Reproducibility",
-        f"Approval gates recorded: {len(evidence.get('human_approval_evidence',[]))}",
-        f"Agent Why evidence: {json.dumps(evidence.get('agent_why',[]),default=str)[:9000]}",
-        f"Agent Self-Checks: {json.dumps(evidence.get('agent_self_checks',[]),default=str)[:9000]}",
-        f"Compute policy: {json.dumps(evidence.get('compute_info',{}),default=str)[:4000]}",
+        f"The evidence record contains {len(evidence.get('human_approval_evidence',[]))} human approval event(s). Agent Why and Agent Self-Check evidence are retained separately so that analytical decisions can be reviewed. The reproducibility package should be retained with the dataset version, random seeds, provider configuration and generated artifacts.",
         "",
         "12. Evidence Appendix",
-        f"Evidence DAG: {json.dumps(evidence.get('evidence_dag',{}),default=str)[:12000]}",
-        "The report must be read together with the underlying dataset and recorded analysis artifacts; it is not a substitute for the primary data.",
+        "The Evidence Appendix contains the machine-readable governance and provenance record. Raw evidence is intentionally separated from the executive narrative so that the report remains readable while retaining an auditable trail for technical review.",
+        json.dumps({"leakage_gate":leakage,"validation_strategy":validation,"evidence_dag":evidence.get("evidence_dag",{})},default=str,indent=2)[:18000],
     ]
     return "\n".join(lines)
 
@@ -136,7 +145,7 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
         try:
             import plotly.io as pio
             pio.from_json(fj).write_image(str(path),format="png",width=1200,height=700,scale=1)
-            if path.exists(): images.append((str(path),item.get("title",f"Visualization {i+1}"),item.get("rationale","")))
+            if path.exists(): images.append((str(path),item.get("title",f"Visualization {i+1}"),item.get("caption") or item.get("rationale",""),item.get("explanation", "")))
         except Exception: pass
     return images
 
@@ -169,11 +178,11 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
         for wrapped in textwrap.wrap(safe,width=105,break_long_words=True,break_on_hyphens=False) or [" "]:
             pdf.multi_cell(0,5.5,wrapped,new_x="LMARGIN",new_y="NEXT")
         if line=="7. Visual Results":
-            for path,title,rationale in images:
+            for path,title,caption,explanation in images:
                 try:
-                    pdf.set_font("Helvetica","B",11); pdf.multi_cell(0,6,title,new_x="LMARGIN",new_y="NEXT"); pdf.image(path,w=175); pdf.set_font("Helvetica",size=9); pdf.multi_cell(0,5,textwrap.fill(rationale,100),new_x="LMARGIN",new_y="NEXT"); pdf.ln(3)
+                    pdf.set_font("Helvetica","B",11); pdf.multi_cell(0,6,title,new_x="LMARGIN",new_y="NEXT"); pdf.image(path,w=175); pdf.set_font("Helvetica","I",9); pdf.multi_cell(0,5,textwrap.fill("Caption: "+caption,100),new_x="LMARGIN",new_y="NEXT"); pdf.set_font("Helvetica",size=9); pdf.multi_cell(0,5,textwrap.fill("Explanation: "+explanation,100),new_x="LMARGIN",new_y="NEXT"); pdf.ln(3)
                 except Exception: pass
-    for path,_,_ in images:
+    for path,_,_,_ in images:
         try: Path(path).unlink(missing_ok=True)
         except Exception: pass
     return bytes(pdf.output())

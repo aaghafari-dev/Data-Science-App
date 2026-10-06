@@ -22,6 +22,9 @@ class LLMConfig:
     api_key: str = ""
     local_path: str = ""
     api_base: str = ""
+    # User-declared resource budget for local LLM execution. None = auto-detect.
+    ram_gb: float | None = None
+    gpu_vram_gb: float | None = None
 
     def configured(self) -> bool:
         """Perform the configured operation for this component.
@@ -107,6 +110,8 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
         api_key=str(state.get("api_key") or ""),
         local_path=str(state.get("local_path") or ""),
         api_base=str(state.get("api_base") or ""),
+        ram_gb=(float(state["ram_gb"]) if state.get("ram_gb") not in (None, "", "Auto-detect") else None),
+        gpu_vram_gb=(float(state["gpu_vram_gb"]) if state.get("gpu_vram_gb") not in (None, "", "Auto-detect") else None),
     )
 
 
@@ -124,7 +129,21 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
                 "reason": f"Local model '{cfg.model_name}' is not available in the configured cache/path.",
                 "path": local_model_path(cfg.model_name, cfg.local_path),
             }
-        return {"status": "ready", "provider": "local", "model": cfg.model_name, "path": local_model_path(cfg.model_name, cfg.local_path)}
+        try:
+            global _LOCAL_LOADER
+            try:
+                _LOCAL_LOADER
+            except NameError:
+                from agent.local_llm import LocalLLMLoader
+                _LOCAL_LOADER = LocalLLMLoader()
+            resource = _LOCAL_LOADER.resource_preflight(
+                cfg.model_name, cfg.local_path, ram_budget_gb=cfg.ram_gb, gpu_budget_gb=cfg.gpu_vram_gb
+            )
+        except Exception as exc:
+            resource = {"status": "review", "reason": f"Resource preflight unavailable: {exc}"}
+        if resource.get("status") == "blocked":
+            return {"status": "blocked", "provider": "local", "model": cfg.model_name, "path": local_model_path(cfg.model_name, cfg.local_path), **resource}
+        return {"status": "ready", "provider": "local", "model": cfg.model_name, "path": local_model_path(cfg.model_name, cfg.local_path), "resource": resource}
     return {
         "status": "ready",
         "provider": "api",
@@ -152,7 +171,7 @@ def get_llm(cfg: LLMConfig):
             _LOCAL_LOADER
         except NameError:
             _LOCAL_LOADER = LocalLLMLoader()
-        return _LOCAL_LOADER.get_llm(cfg.model_name, custom_path=cfg.local_path)
+        return _LOCAL_LOADER.get_llm(cfg.model_name, custom_path=cfg.local_path, ram_budget_gb=cfg.ram_gb, gpu_budget_gb=cfg.gpu_vram_gb)
 
     family = infer_api_provider(cfg.model_name)
     if family in {"openai", "deepseek", "xai", "mistral", "generic"}:

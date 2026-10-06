@@ -9,7 +9,7 @@ import re
 import numpy as np
 import pandas as pd
 
-_TARGET_PATTERNS = re.compile(r"(^|_)(target|label|class|y|outcome|response|result|score|price|sales|revenue|churn|survived|default|bandgap|conductivity)($|_)", re.I)
+_TARGET_PATTERNS = re.compile(r"(^|_)(target|label|class|y|outcome|response|result|score|price|sales|revenue|salary|wage|income|compensation|earnings|amount|churn|survived|default|bandgap|conductivity)($|_)", re.I)
 _ID_PATTERNS = re.compile(r"(^|_)(id|uuid|key|index|identifier)($|_)", re.I)
 _FUTURE_PATTERNS = re.compile(r"future|next|lead|after|outcome|post_|future_|timestamp_end|prediction", re.I)
 

@@ -15,7 +15,7 @@ class AgentProviderRegistry:
             if isinstance(value, LLMConfig):
                 self._configs[agent] = value
             elif isinstance(value, dict):
-                self._configs[agent] = LLMConfig(**{k: value.get(k, "") for k in ("provider","model_name","api_key","local_path","api_base")})
+                self._configs[agent] = LLMConfig(**{k: value.get(k, "") for k in ("provider","model_name","api_key","local_path","api_base","ram_gb","gpu_vram_gb")})
 
     def set(self, agent_name: str, config: LLMConfig) -> None:
         """Set the provider for one named agent."""

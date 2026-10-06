@@ -100,6 +100,13 @@ class AgentState(TypedDict, total=False):
     local_path: str
     rejection_feedback: str
     api_base: str
+    run_id: str
+    thread_id: str
+    memory_refs: list[str]
+    approval_history: list[dict[str, Any]]
+    completed_bullets: list[str]
+    next_bullets: list[str]
+    risk_bullets: list[str]
 
 
 STAGES = ["PLAN", "VALIDATION", "PREPROCESSING", "MODEL_SELECTION", "MODEL_EXECUTION", "EVALUATION", "ROBUSTNESS", "DIAGNOSIS", "VERIFY", "STOP"]
@@ -313,6 +320,45 @@ def _proposal(state: AgentState, stage: str | None = None, revised: bool = False
         brief = [f"Evidence IDs recorded: {len(state.get('evidence_ids', []) or [])}", "Verification checks structural completeness and consistency."]
     elif stage == "STOP":
         brief = [f"Approved stages: {len(state.get('approved_steps', []) or [])}", "Completion depends on evidence sufficiency and unresolved-risk review."]
+    completed_bullets = {
+        "PLAN": ["Dataset structure and analytical objective have been reviewed.", "Task hypotheses and candidate methods have been compared.", "A bounded specialist plan has been prepared."],
+        "VALIDATION": ["The proposed validation protocol and leakage controls have been reviewed.", "The final test partition remains locked for supervised work."],
+        "PREPROCESSING": ["The preprocessing policy has been specified with train-only fitting requirements.", "Feature provenance and availability checks have been identified."],
+        "MODEL_SELECTION": ["Candidate methods, assumptions and evidence gaps have been reviewed.", "The primary method and challenger strategy have been identified."],
+        "MODEL_EXECUTION": ["The validation, preprocessing and method-selection stages have been approved.", f"The next governed action is execution of the approved specialist: {state.get('current_subagent') or route}."],
+        "EVALUATION": ["Specialist results and task-appropriate metrics have been reviewed.", "Baseline, uncertainty and diagnostic evidence have been collected where available."],
+        "ROBUSTNESS": ["Sensitivity and robustness evidence has been reviewed where applicable.", "Remaining diagnostic limitations have been identified."],
+        "DIAGNOSIS": ["Automatic diagnostic hypotheses and subgroup/slice evidence have been reviewed."],
+        "VERIFY": ["Independent structural verification has been completed.", "Evidence completeness and internal consistency have been checked."],
+        "STOP": ["The governed analysis has reached its final evidence review gate."]
+    }
+    next_bullets = {
+        "PLAN": ["Run the validation and leakage-control review.", "Do not train a model until the validation design is approved."],
+        "VALIDATION": ["Review and approve the preprocessing policy.", "Keep transformations inside the permitted training boundary."],
+        "PREPROCESSING": ["Compare candidate methods and confirm the selected method family.", "Review assumptions and challenger methods."],
+        "MODEL_SELECTION": [f"Execute only the approved specialist: {state.get('current_subagent') or route}.", "Generate evidence and preserve the selected validation protocol."],
+        "MODEL_EXECUTION": ["Evaluate the specialist result against the approved validation protocol.", "Review metrics, uncertainty and diagnostics."],
+        "EVALUATION": ["Review robustness and sensitivity evidence.", "Identify whether any high-severity risk requires another experiment."],
+        "ROBUSTNESS": ["Review automatic diagnosis and subgroup/generalisation risks.", "Prepare the evidence for independent verification."],
+        "DIAGNOSIS": ["Run independent evidence verification.", "Check completeness and consistency before the final stop decision."],
+        "VERIFY": ["Review the final stopping decision and unresolved risks.", "Finish only when evidence is sufficient."],
+        "STOP": ["Finalize the governed run and publish the evidence for Plot, Report, Story and Presentation."]
+    }
+    risk_bullets = {
+        "PLAN": ["Target ambiguity or an inappropriate task route may invalidate downstream analysis."],
+        "VALIDATION": ["Leakage, temporal ordering, grouping or class imbalance can make metrics misleading."],
+        "PREPROCESSING": ["Fitting transformations outside the training boundary can cause leakage."],
+        "MODEL_SELECTION": ["A high validation score alone is not evidence of scientific validity or causality."],
+        "MODEL_EXECUTION": ["Compute failures, convergence issues or specialist assumptions may require revision."],
+        "EVALUATION": ["Aggregate metrics may hide subgroup failures or generalisation gaps."],
+        "ROBUSTNESS": ["Sensitivity checks are diagnostic and do not establish causal validity."],
+        "DIAGNOSIS": ["Automated hypotheses require human/domain interpretation."],
+        "VERIFY": ["Structural verification cannot certify scientific truth."],
+        "STOP": ["Unresolved high-severity evidence should trigger another governed experiment rather than silent completion."]
+    }
+    stage_completed = completed_bullets.get(stage, ["The current governed evidence package has been prepared."])
+    stage_next = next_bullets.get(stage, ["Proceed only after explicit human approval."])
+    stage_risk = risk_bullets.get(stage, ["Review the evidence and limitations before approval."])
     memory=AgentMemory.from_dict(state.get("master_memory"), "Master", 30)
     memory.remember("approval_stage", {"stage":stage,"route":route,"subagent":state.get("current_subagent"),"summary":summary})
     return {
@@ -326,6 +372,9 @@ def _proposal(state: AgentState, stage: str | None = None, revised: bool = False
         "current_step": f"MASTER: {stage}",
         "analysis_stage": stage,
         "stage_summary": prefix + summary,
+        "completed_bullets": stage_completed,
+        "next_bullets": stage_next,
+        "risk_bullets": stage_risk,
         "needs_approval": True,
         "user_approved": False,
         "why_evidence": why,

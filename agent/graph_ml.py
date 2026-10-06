@@ -6,8 +6,6 @@ This module provides the implementation used by Data Science Studio Pro for its 
 from __future__ import annotations
 from typing import Any
 import time
-import warnings
-from sklearn.exceptions import ConvergenceWarning
 import numpy as np
 import pandas as pd
 from sklearn.base import clone
@@ -20,6 +18,7 @@ from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.naive_bayes import GaussianNB
 from sklearn.neural_network import MLPClassifier, MLPRegressor
+from services.mlp_training import make_mlp, fit_search_with_convergence_audit
 from sklearn.preprocessing import PolynomialFeatures, FunctionTransformer
 from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
@@ -69,7 +68,7 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
             "Decision Tree":(DecisionTreeClassifier(random_state=seed),{"model__max_depth":[None,4,8,16]}),
             "KNN":(KNeighborsClassifier(),{"model__n_neighbors":[3,5,9],"model__weights":["uniform","distance"]}),
             "Naive Bayes":(GaussianNB(),{"model__var_smoothing":[1e-9,1e-8,1e-7]}),
-            "Neural Network":(MLPClassifier(hidden_layer_sizes=(64,32),max_iter=1000,early_stopping=True,n_iter_no_change=20,tol=1e-3,random_state=seed),{"model__alpha":[1e-5,1e-4,1e-3]}),
+            "Neural Network":(make_mlp("classification", seed),{"model__alpha":[1e-5,1e-4,1e-3]}),
         }
         try:
             from xgboost import XGBClassifier
@@ -90,7 +89,7 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
         "Decision Tree":(DecisionTreeRegressor(random_state=seed),{"model__max_depth":[None,5,10,20]}),
         "Random Forest":(RandomForestRegressor(n_estimators=250,random_state=seed,n_jobs=parallel_jobs),{"model__max_depth":[None,10,20]}),
         "Gradient Boosting":(GradientBoostingRegressor(random_state=seed),{"model__n_estimators":[100,200],"model__learning_rate":[.03,.1],"model__max_depth":[2,3]}),
-        "Neural Network":(MLPRegressor(hidden_layer_sizes=(64,32),max_iter=1000,early_stopping=True,n_iter_no_change=20,tol=1e-3,random_state=seed),{"model__alpha":[1e-5,1e-4,1e-3]}),
+        "Neural Network":(make_mlp("regression", seed),{"model__alpha":[1e-5,1e-4,1e-3]}),
     }
     try:
         from xgboost import XGBRegressor
@@ -162,13 +161,10 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
                 search=RandomizedSearchCV(pipe,params,n_iter=min(3,max(1,len(next(iter(params.values()))))),scoring="f1_weighted" if task=="classification" else "neg_root_mean_squared_error",cv=cv_folds,n_jobs=1,refit=True,random_state=seed,return_train_score=True)
             else:
                 search=GridSearchCV(pipe,params,scoring="f1_weighted" if task=="classification" else "neg_root_mean_squared_error",cv=cv_folds,n_jobs=1,refit=True,return_train_score=True)
-            with warnings.catch_warnings(record=True) as caught:
-                warnings.simplefilter("always")
-                search.fit(Xtr,ytr)
+            convergence=fit_search_with_convergence_audit(search, Xtr, ytr)
             pred=search.predict(Xte); proba=search.predict_proba(Xte) if hasattr(search,"predict_proba") else None
             metrics=_safe_metrics(yte,pred,task,proba); prof=ProfessionalEvaluationEngine.evaluate_bundle(search.best_estimator_,Xtr,Xte,ytr,yte,task,seed,n_jobs=1)
-            convergence=[str(w.message) for w in caught if issubclass(w.category,ConvergenceWarning)]
-            results[name]={"status":"ok","metrics":metrics,"cv_selection_score":float(search.best_score_),"best_params":search.best_params_,"seconds":round(time.time()-t0,3),"professional_evaluation":prof,"convergence_warnings":convergence[:5],"converged":not bool(convergence)}
+            results[name]={"status":"ok","metrics":metrics,"cv_selection_score":float(search.best_score_),"best_params":search.best_params_,"seconds":round(time.time()-t0,3),"professional_evaluation":prof,"convergence":convergence,"convergence_warnings":convergence.get("warnings",[]),"converged":bool(convergence.get("converged",False))}
             fitted[name]=search.best_estimator_
         except Exception as exc:
             results[name]={"status":"unavailable","error":str(exc),"metrics":{}}

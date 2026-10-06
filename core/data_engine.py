@@ -242,7 +242,7 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
         self.original_df = self.df.copy(); self._refresh_schema()
         return f"Scaled {column}."
 
-    def get_extra_insight(self, column, top_n=10):
+    def get_extra_insight(self, column, top_n=10, ascending=False):
         """Perform the get extra insight operation for this component.
 
 The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
@@ -250,8 +250,9 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
         if self.df is None or column not in self.df.columns:
             return None
         if pd.api.types.is_numeric_dtype(self.df[column]):
-            return self.df.nlargest(top_n, column)[[column]].copy()
-        out = self.df[column].value_counts().head(top_n).reset_index()
+            return self.df[[column]].dropna().sort_values(column, ascending=ascending).head(top_n).copy()
+        counts=self.df[column].value_counts(dropna=False).sort_values(ascending=ascending).head(top_n)
+        out = counts.reset_index()
         out.columns = [column, "Count"]
         return out
 

@@ -10,6 +10,7 @@ import pickle
 import io
 import json
 import zipfile
+import uuid
 from pathlib import Path
 from typing import Any
 import numpy as np
@@ -19,6 +20,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QMenu, QToolBar, QStatusBar, QFileDialog, QMessageBox, QDialog,
                              QDialogButtonBox, QTextEdit, QSlider, QColorDialog, QListWidgetItem,
                              QInputDialog, QTabWidget, QSplitter, QTableWidget, QTableWidgetItem,
+                             QFontComboBox,
                              QCheckBox, QSpinBox, QFontDialog, QDoubleSpinBox, QGroupBox, QFormLayout, QScrollArea, QAbstractItemView, QGridLayout, QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsTextItem)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QMimeData, QPointF, QRectF
 from PyQt6.QtGui import QAction, QIcon, QColor, QPalette, QFont, QKeySequence, QImage, QPainter
@@ -56,6 +58,7 @@ from services.compute_backend import ComputeBackend
 from services.agent_tools import default_registry
 from services.analysis_recipe import AnalysisRecipe
 from services.agent_console import AgentRunConsole
+from services.agent_memory_store import AgentMemoryStore
 from services.analysis_state import AnalysisStateMachine, AnalysisState
 from services.artifacts import ArtifactStore
 from services.target_feature_selection import recommend_targets_and_features
@@ -72,6 +75,41 @@ from services.cnn_image_analysis import CNNConfig, CNNImageAnalysisEngine
 from core.tableau_views import TableauSheet, TableauDashboard, TableauStory
 from langchain_core.messages import HumanMessage
 import config
+
+class DatasetDropListWidget(QListWidget):
+    """Loaded Sheets list that accepts dropped local dataset files without changing the existing dock geometry."""
+    filesDropped = pyqtSignal(list)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls() or event.mimeData().hasText():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls() or event.mimeData().hasText():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        paths=[]
+        if event.mimeData().hasUrls():
+            paths=[u.toLocalFile() for u in event.mimeData().urls() if u.isLocalFile()]
+        if not paths and event.mimeData().hasText():
+            text=event.mimeData().text().strip()
+            if os.path.isfile(text): paths=[text]
+        if paths:
+            self.filesDropped.emit(paths)
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
 
 class ColumnDragListWidget(QListWidget):
     """Data Management list that exports the actual field name as text/plain MIME."""
@@ -280,7 +318,7 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
 The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
 """
         try:
-            result = self.agent_app.invoke(self.state)
+            result = self.agent_app.invoke(self.state, config={"configurable": {"thread_id": self.state.get("thread_id", "agent-default")}})
             if isinstance(result, dict):
                 self.state.update(result)
             if self.state.get("needs_approval"):
@@ -329,7 +367,7 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
 """
         super().__init__(parent)
         self.setWindowTitle("Select Local LLM model or API key")
-        self.resize(560, 380)
+        self.resize(600, 500)
         current = current or {}
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("Select the AI provider for one governed agent. Each agent checks its own selection immediately before execution."))
@@ -339,6 +377,14 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
         layout.addWidget(self.provider_combo)
         self.model_combo = QComboBox(); self.model_combo.addItems(list(config.LOCAL_LLM_MODELS.keys())); layout.addWidget(QLabel("Local model:")); layout.addWidget(self.model_combo)
         self.custom_path = QLineEdit(); self.custom_path.setPlaceholderText("Optional custom local model path"); layout.addWidget(self.custom_path)
+        resource_box=QGroupBox("Local LLM Resource Profile")
+        resource_form=QFormLayout(resource_box)
+        self.ram_combo=QComboBox(); self.ram_combo.addItems(config.LOCAL_LLM_RAM_OPTIONS_GB)
+        self.gpu_ram_combo=QComboBox(); self.gpu_ram_combo.addItems(config.LOCAL_LLM_GPU_VRAM_OPTIONS_GB)
+        resource_form.addRow("RAM available to this Agent (GiB):", self.ram_combo)
+        resource_form.addRow("GPU VRAM available to this Agent (GiB):", self.gpu_ram_combo)
+        resource_note=QLabel("These values are the resource budget you want the Agent to use. The application also checks the actual free RAM/VRAM before loading the local model; the selected values never override physical hardware limits.")
+        resource_note.setWordWrap(True); resource_form.addRow(resource_note); layout.addWidget(resource_box)
         self.api_model = QComboBox(); self.api_model.setEditable(True); self.api_model.addItems(config.CLOUD_LLM_MODELS); self.api_model.setInsertPolicy(QComboBox.InsertPolicy.NoInsert); layout.addWidget(QLabel("API model:")); layout.addWidget(self.api_model)
         self.api_key = QLineEdit(); self.api_key.setEchoMode(QLineEdit.EchoMode.Password); self.api_key.setPlaceholderText("API key"); layout.addWidget(self.api_key)
         self.status = QLabel(""); self.status.setWordWrap(True); layout.addWidget(self.status)
@@ -351,6 +397,8 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
         if current.get("api_key"): self.api_key.setText(current["api_key"])
         if current.get("provider") == "api" and current.get("model_name"): self.api_model.setCurrentText(current["model_name"])
         if current.get("local_path"): self.custom_path.setText(current["local_path"])
+        self.ram_combo.setCurrentText("Auto-detect" if current.get("ram_gb") is None else str(current.get("ram_gb")))
+        self.gpu_ram_combo.setCurrentText("Auto-detect" if current.get("gpu_vram_gb") is None else str(current.get("gpu_vram_gb")))
         self._refresh()
         buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel); buttons.accepted.connect(self.accept); buttons.rejected.connect(self.reject); layout.addWidget(buttons)
 
@@ -358,12 +406,14 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
         """Load the currently stored provider for the selected agent."""
         parent=self.parent()
         cfg=(parent._agent_llm_config(agent_name) if parent is not None and hasattr(parent,"_agent_llm_config") else LLMConfig())
-        self.provider_combo.blockSignals(True); self.model_combo.blockSignals(True); self.api_model.blockSignals(True); self.custom_path.blockSignals(True); self.api_key.blockSignals(True)
+        self.provider_combo.blockSignals(True); self.model_combo.blockSignals(True); self.api_model.blockSignals(True); self.custom_path.blockSignals(True); self.api_key.blockSignals(True); self.ram_combo.blockSignals(True); self.gpu_ram_combo.blockSignals(True)
         self.provider_combo.setCurrentText({"none":"None","local":"Local LLM model","api":"API key / cloud model"}.get(cfg.provider,"None"))
         if cfg.model_name in config.LOCAL_LLM_MODELS: self.model_combo.setCurrentText(cfg.model_name)
         if cfg.provider=="api": self.api_model.setCurrentText(cfg.model_name)
         self.custom_path.setText(cfg.local_path or ""); self.api_key.setText(cfg.api_key or "")
-        for w in (self.provider_combo,self.model_combo,self.api_model,self.custom_path,self.api_key): w.blockSignals(False)
+        self.ram_combo.setCurrentText("Auto-detect" if cfg.ram_gb is None else str(int(cfg.ram_gb) if float(cfg.ram_gb).is_integer() else cfg.ram_gb))
+        self.gpu_ram_combo.setCurrentText("Auto-detect" if cfg.gpu_vram_gb is None else str(int(cfg.gpu_vram_gb) if float(cfg.gpu_vram_gb).is_integer() else cfg.gpu_vram_gb))
+        for w in (self.provider_combo,self.model_combo,self.api_model,self.custom_path,self.api_key,self.ram_combo,self.gpu_ram_combo): w.blockSignals(False)
         self._refresh()
 
     def selected_agent(self):
@@ -377,7 +427,7 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
 """
         provider=self.provider_combo.currentText()
         local=provider=="Local LLM model"; api=provider=="API key / cloud model"
-        self.model_combo.setEnabled(local); self.custom_path.setEnabled(local); self.api_model.setEnabled(api); self.api_key.setEnabled(api)
+        self.model_combo.setEnabled(local); self.custom_path.setEnabled(local); self.ram_combo.setEnabled(local); self.gpu_ram_combo.setEnabled(local); self.api_model.setEnabled(api); self.api_key.setEnabled(api)
         if local:
             name=self.model_combo.currentText(); ok=local_model_available(name,self.custom_path.text())
             self.status.setText(("Ready: local model is available." if ok else "Model not found in the local cache/path. Choose another model or a custom path."))
@@ -392,10 +442,10 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
 """
         provider=self.provider_combo.currentText()
         if provider=="Local LLM model":
-            return {"provider":"local","model_name":self.model_combo.currentText(),"api_key":"","local_path":self.custom_path.text().strip(),"api_base":""}
+            return {"provider":"local","model_name":self.model_combo.currentText(),"api_key":"","local_path":self.custom_path.text().strip(),"api_base":"","ram_gb":(None if self.ram_combo.currentText()=="Auto-detect" else float(self.ram_combo.currentText())),"gpu_vram_gb":(None if self.gpu_ram_combo.currentText()=="Auto-detect" else float(self.gpu_ram_combo.currentText()))}
         if provider=="API key / cloud model":
-            return {"provider":"api","model_name":self.api_model.currentText().strip(),"api_key":self.api_key.text().strip(),"local_path":"","api_base":""}
-        return {"provider":"none","model_name":"","api_key":"","local_path":"","api_base":""}
+            return {"provider":"api","model_name":self.api_model.currentText().strip(),"api_key":self.api_key.text().strip(),"local_path":"","api_base":"","ram_gb":None,"gpu_vram_gb":None}
+        return {"provider":"none","model_name":"","api_key":"","local_path":"","api_base":"","ram_gb":None,"gpu_vram_gb":None}
 
 
 class DataAnalysisDialog(QDialog):
@@ -421,7 +471,21 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
             if numeric_df.empty:
                 text.setText("No numeric columns for correlation.")
             else:
-                text.setText(numeric_df.corr().to_string())
+                corr=numeric_df.corr()
+                text.hide()
+                fig=Figure(figsize=(8,6),dpi=100); ax=fig.add_subplot(111)
+                im=ax.imshow(corr.to_numpy(),vmin=-1,vmax=1,cmap="coolwarm",aspect="auto")
+                ax.set_xticks(range(len(corr.columns))); ax.set_yticks(range(len(corr.index)))
+                ax.set_xticklabels(corr.columns,rotation=45,ha="right"); ax.set_yticklabels(corr.index)
+                for i in range(len(corr.index)):
+                    for j in range(len(corr.columns)):
+                        ax.text(j,i,f"{corr.iat[i,j]:.2f}",ha="center",va="center",fontsize=8)
+                ax.set_title("Correlation Matrix — Pearson r")
+                fig.colorbar(im,ax=ax,label="Correlation (r)")
+                fig.tight_layout()
+                canvas=FigureCanvas(fig); layout.addWidget(canvas,1)
+                note=QLabel("Interpretation: values near +1 indicate strong positive linear association; values near −1 indicate strong negative association. Correlation is not evidence of causality.")
+                note.setWordWrap(True); layout.addWidget(note)
         elif analysis_type == "Hypothesis Testing":
             numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
             if len(numeric_cols) >= 2:
@@ -977,16 +1041,34 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
 """
         super().__init__(rect,parent); self.sheet_name=title; self._resizing=False; self._press=QPointF(); self.setFlags(QGraphicsRectItem.GraphicsItemFlag.ItemIsMovable|QGraphicsRectItem.GraphicsItemFlag.ItemIsSelectable); self.setAcceptHoverEvents(True)
         from PyQt6.QtWidgets import QGraphicsPixmapItem, QGraphicsTextItem
+        self._source_pixmap = pixmap
         self.image_item=QGraphicsPixmapItem(pixmap,self); self.image_item.setPos(8,28); self.image_item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
         self.text_item=QGraphicsTextItem(title,self); self.text_item.setDefaultTextColor(QColor("#17324d")); self.text_item.setPos(8,5); self.text_item.setFont(QFont("Arial",11,QFont.Weight.Bold))
+        self.caption_item=QGraphicsTextItem("",self); self.caption_item.setDefaultTextColor(QColor("#3b4650")); self.caption_item.setPos(8,0); self.caption_item.setTextWidth(max(120,rect.width()-16)); self.caption_item.setFont(QFont("Arial",9))
+        self.set_caption("")
+        self._sync_image()
+
+    def set_caption(self, caption: str):
+        """Update the visible Story figure caption without altering the main GUI layout."""
+        text = str(caption or "")
+        # Rich HTML is supported in the editor, but the canvas preview deliberately uses
+        # a short plain-text caption so it remains stable and exportable.
+        try:
+            from PyQt6.QtGui import QTextDocument
+            doc = QTextDocument(); doc.setHtml(text); plain = doc.toPlainText().strip()
+        except Exception:
+            plain = text
+        self.caption_item.setPlainText(plain)
+        self.caption_item.setTextWidth(max(120, self.rect().width()-16))
         self._sync_image()
     def _sync_image(self):
         """Perform the sync image operation for this component.
 
 The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
 """
-        r=self.rect(); available_w=max(40,r.width()-16); available_h=max(40,r.height()-42); pm=self.image_item.pixmap();
+        r=self.rect(); available_w=max(40,r.width()-16); caption_h=max(26,min(72,self.caption_item.boundingRect().height()+8)); available_h=max(40,r.height()-42-caption_h); pm=self._source_pixmap
         if not pm.isNull(): self.image_item.setPixmap(pm.scaled(int(available_w),int(available_h),Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation))
+        self.caption_item.setPos(8,max(40,r.height()-caption_h+2)); self.caption_item.setTextWidth(max(120,r.width()-16))
     def mousePressEvent(self,event):
         """Perform the mouse press event operation for this component.
 
@@ -1085,12 +1167,16 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
         # provider selected in the AI Provider dialog.
         self.llm_config = LLMConfig()
         self.agent_provider_registry = AgentProviderRegistry()
+        self.agent_memory_store = AgentMemoryStore()
+        self.agent_run_id = ""
+        self.agent_thread_id = ""
         self.cnn_image_dataset_path = ""
         self.agent_ds_state = {
             "messages": [], "approved_steps": [], "rejected_steps": [],
             "user_approved": False, "dataframe": None,
             "api_key": "", "model_name": "", "llm_provider": "none", "local_path": "", "api_base": "",
-            "max_steps": 20, "abort_requested": False, "human_approval_evidence": []
+            "max_steps": 20, "abort_requested": False, "human_approval_evidence": [],
+            "run_id": "", "thread_id": "", "memory_refs": [], "approval_history": []
         }
         self.agent_report_state = {
             "analysis_results": "", "pdf_buffer": None,
@@ -1245,11 +1331,12 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
 The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
 """
         self.sheets_dock = QDockWidget("Loaded Sheets", self)
-        self.sheets_list = QListWidget()
+        self.sheets_list = DatasetDropListWidget()
         self.sheets_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.sheets_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.sheets_list.itemClicked.connect(self.on_loaded_sheet_select)
         self.sheets_list.customContextMenuRequested.connect(self.loaded_sheets_context_menu)
+        self.sheets_list.filesDropped.connect(self._load_dropped_datasets)
         self.sheets_dock.setWidget(self.sheets_list)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.sheets_dock)
 
@@ -1605,6 +1692,7 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
         dialog = QDialog(self); dialog.setWindowTitle(f"Extra Insight: {column}"); dialog.resize(900, 700)
         layout = QVBoxLayout(dialog); controls = QHBoxLayout()
         controls.addWidget(QLabel("Top N:")); top_n = QSpinBox(); top_n.setRange(5, 50); top_n.setValue(10); controls.addWidget(top_n)
+        controls.addWidget(QLabel("Sort:")); sort_order=QComboBox(); sort_order.addItems(["Descending","Ascending"]); controls.addWidget(sort_order)
         controls.addWidget(QLabel("Chart Type:")); chart_type = QComboBox(); chart_type.addItems(["bar", "line", "scatter", "pie"]); controls.addWidget(chart_type)
         controls.addWidget(QLabel("Font Size:")); font_size = QSpinBox(); font_size.setRange(8, 30); font_size.setValue(12); controls.addWidget(font_size)
         controls.addWidget(QLabel("Color:")); color_btn = QPushButton("Pick"); controls.addWidget(color_btn)
@@ -1622,7 +1710,7 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
             if c.isValid():
                 current[target] = c.name(); (color_btn if target == "color" else hover_btn).setStyleSheet(f"background-color:{c.name()}; color:white;"); update_plot()
 
-        color_btn.clicked.connect(lambda: pick("color")); hover_btn.clicked.connect(lambda: pick("hover"))
+        color_btn.clicked.connect(lambda: pick("color")); hover_btn.clicked.connect(lambda: pick("hover")); sort_order.currentTextChanged.connect(lambda _: update_plot())
 
         def update_plot():
             """Perform the update plot operation for this component.
@@ -1630,7 +1718,7 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
 The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
 """
             ax.clear(); state["artists"] = []; state["annotation"] = None
-            data = self.data_engine.get_extra_insight(column, top_n.value())
+            data = self.data_engine.get_extra_insight(column, top_n.value(), ascending=(sort_order.currentText()=="Ascending"))
             if data is None or data.empty:
                 ax.text(.5, .5, "No data available", ha="center", va="center"); canvas.draw(); return
             is_num = pd.api.types.is_numeric_dtype(self.data_engine.df[column])
@@ -1725,7 +1813,7 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
 
         analysis_menu = menubar.addMenu("Data Analysis")
         analysis_menu.addAction("Descriptive Statistics", lambda: self.show_analysis("Descriptive Statistics"))
-        analysis_menu.addAction("Correlation Matrix", lambda: self.show_analysis("Correlation Matrix"))
+        analysis_menu.addAction("Correlation Matrix — Heatmap", lambda: self.show_analysis("Correlation Matrix"))
         analysis_menu.addAction("Time Series Analysis", lambda: self.show_analysis("Time Series Analysis"))
         analysis_menu.addAction("Classification Analysis", self.show_classification_analysis)
         analysis_menu.addAction("Regression Analysis", self.show_regression_analysis)
@@ -1733,9 +1821,14 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
         analysis_menu.addAction("Unsupervised Learning", self.show_unsupervised_learning)
         analysis_menu.addAction("Reinforcement Learning", self.show_reinforcement_learning)
         analysis_menu.addAction("CNN Image Analysis", self.show_cnn_image_analysis)
+        analysis_menu.addSeparator()
+        analysis_menu.addAction("Statistical Analysis Wizard", self.show_statistical_wizard)
+        analysis_menu.addAction("Error Analysis Workspace", self.show_error_analysis)
+        analysis_menu.addAction("Latest Agent Results & Evidence", self.show_agent_results)
 
         ai_menu = menubar.addMenu("AI Agents")
         ai_menu.addAction("Agent Data Scientist", self.run_agent_data_scientist)
+        ai_menu.addAction("Agent Results & Evidence", self.show_agent_results)
         ai_menu.addAction("AI Agent Plot", self.run_ai_agent_plot)
         ai_menu.addAction("AI Agent Report", self.run_ai_report)
         ai_menu.addAction("AI Agent Table Creation", self.run_ai_agent_table_creation)
@@ -2150,35 +2243,69 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
         except Exception as exc:
             QMessageBox.critical(self, "Union Datasets", str(exc))
 
-    def open_file(self):
-        """Perform the open file operation for this component.
+    def _load_dataset_path(self, filepath: str, *, source_action: str = "open") -> bool:
+        """Load one dataset through the canonical provenance-aware ingestion path.
 
-The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
-"""
-        filepath, _ = QFileDialog.getOpenFileName(self, "Open File", "", "CSV Files (*.csv);;Excel Files (*.xlsx *.xls)")
+        File→Open and Loaded Sheets drag-and-drop intentionally share this method so
+        neither route can bypass dataset cards, contracts, lineage, fingerprints,
+        experiment registration, or active-sheet synchronization.
+        """
+        filepath = str(Path(filepath).expanduser())
+        if not filepath or not os.path.isfile(filepath):
+            return False
+        allowed = {".csv", ".xlsx", ".xls", ".parquet", ".json", ".txt"}
+        suffix = Path(filepath).suffix.lower()
+        if suffix not in allowed:
+            QMessageBox.warning(self, "Unsupported Dataset", f"Unsupported dataset type: {suffix or 'unknown'}")
+            return False
+        try:
+            previous_contract = self.data_contract.copy() if self.data_contract else None
+            self.data_engine.load_data(filepath)
+            if self.data_engine.df is None or self.data_engine.df.empty:
+                raise ValueError("The selected dataset contains no rows.")
+            self.analysis_state = AnalysisStateMachine(AnalysisState.DATA_LOADED.value)
+            fingerprint = dataset_fingerprint(self.data_engine.df)
+            self.artifact_store.register("dataset", Path(filepath).name, {"fingerprint": fingerprint, "source": filepath, "rows": len(self.data_engine.df), "columns": len(self.data_engine.df.columns), "ingest_action": source_action})
+            self.analysis_recipe.add("load_dataset", {"source": filepath, "rows": len(self.data_engine.df), "columns": len(self.data_engine.df.columns), "ingest_action": source_action})
+            backend_plan = self.large_data_engine.plan(self.data_engine.df)
+            self.status.showMessage(f"Data backend plan: {backend_plan.backend} — {backend_plan.reason}")
+            self.lineage.snapshot(self.data_engine.df, operation="load", metadata={"source": filepath, "ingest_action": source_action})
+            self.experiment_registry.start(dataset_hash=fingerprint)
+            self.dataset_card = DatasetCardBuilder.build(self.data_engine.df, source=filepath, purpose="interactive analysis")
+            self.data_contract = DataContractEngine.build(self.data_engine.df, Path(filepath).stem)
+            if previous_contract:
+                drift = DataContractEngine.validate(self.data_engine.df, previous_contract)
+                self._add_evidence({"evidence_id": f"schema-drift-{len(self.evidence_records)+1}", "kind": "schema_drift", "title": "Schema Drift Check", "data": drift, "parent_ids": []})
+                if drift.get("status") == "drift":
+                    self.status.showMessage("Schema drift detected; review Governance → Data Contract & Schema Drift.")
+            self._add_evidence({"evidence_id": f"dataset-{fingerprint[:12]}", "kind": "dataset_card", "title": "Dataset Card", "data": self.dataset_card, "parent_ids": []})
+            name = self._register_loaded_dataset(Path(filepath).stem, self.data_engine.df.copy(), {"source": filepath, "operation": "load", "ingest_action": source_action, "fingerprint": fingerprint}, activate=True)
+            self.status.showMessage(f"Loaded {filepath} as '{name}' — {len(self.data_engine.df):,} rows × {len(self.data_engine.df.columns):,} columns")
+            return True
+        except Exception as exc:
+            QMessageBox.critical(self, "Dataset Load Error", f"Could not load:\n{filepath}\n\n{exc}")
+            return False
+
+    def _load_dropped_datasets(self, paths: list[str]) -> None:
+        """Handle datasets dropped into Loaded Sheets without changing the existing GUI layout."""
+        valid = [p for p in paths if isinstance(p, str) and p.strip()]
+        if not valid:
+            return
+        loaded = 0
+        for path in valid:
+            if self._load_dataset_path(path, source_action="drag_and_drop"):
+                loaded += 1
+        if loaded:
+            self.status.showMessage(f"Loaded {loaded} dataset{'s' if loaded != 1 else ''} by drag-and-drop.")
+
+    def open_file(self):
+        """Open a supported dataset using the same governed path as drag-and-drop."""
+        filepath, _ = QFileDialog.getOpenFileName(
+            self, "Open File", "",
+            "Data Files (*.csv *.xlsx *.xls *.parquet *.json *.txt);;CSV Files (*.csv);;Excel Files (*.xlsx *.xls);;Parquet Files (*.parquet);;JSON Files (*.json);;Text Files (*.txt)"
+        )
         if filepath:
-            try:
-                previous_contract = self.data_contract.copy() if self.data_contract else None
-                self.data_engine.load_data(filepath)
-                self.analysis_state=AnalysisStateMachine(AnalysisState.DATA_LOADED.value)
-                self.artifact_store.register("dataset",Path(filepath).name,{"fingerprint":dataset_fingerprint(self.data_engine.df),"source":filepath,"rows":len(self.data_engine.df),"columns":len(self.data_engine.df.columns)})
-                self.analysis_recipe.add("load_dataset",{"source":filepath,"rows":len(self.data_engine.df),"columns":len(self.data_engine.df.columns)})
-                backend_plan = self.large_data_engine.plan(self.data_engine.df)
-                self.status.showMessage(f"Data backend plan: {backend_plan.backend} — {backend_plan.reason}")
-                self.lineage.snapshot(self.data_engine.df, operation="load", metadata={"source": filepath})
-                self.experiment_registry.start(dataset_hash=dataset_fingerprint(self.data_engine.df))
-                self.dataset_card = DatasetCardBuilder.build(self.data_engine.df, source=filepath, purpose="interactive analysis")
-                self.data_contract = DataContractEngine.build(self.data_engine.df, Path(filepath).stem)
-                if previous_contract:
-                    drift = DataContractEngine.validate(self.data_engine.df, previous_contract)
-                    self._add_evidence({"evidence_id":f"schema-drift-{len(self.evidence_records)+1}","kind":"schema_drift","title":"Schema Drift Check","data":drift,"parent_ids":[]})
-                    if drift.get("status") == "drift": self.status.showMessage("Schema drift detected; review Governance → Data Contract & Schema Drift.")
-                self._add_evidence({"evidence_id":f"dataset-{dataset_fingerprint(self.data_engine.df)[:12]}","kind":"dataset_card","title":"Dataset Card","data":self.dataset_card,"parent_ids":[]})
-                # Loaded Sheets is a dataset source manager; analytical workbook Sheets are separate.
-                self._register_loaded_dataset(Path(filepath).stem, self.data_engine.df.copy(), {"source": filepath, "operation": "load"}, activate=True)
-                self.status.showMessage(f"Loaded {filepath} as an active dataset")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", str(e))
+            self._load_dataset_path(filepath, source_action="open")
 
     def open_pdf(self):
         """Perform the open pdf operation for this component.
@@ -2715,6 +2842,9 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
             objective = "Perform a professional, evidence-bound analysis of the active dataset using the most appropriate analytical methods and specialist agents."
         if feature_override: target_analysis["approved_features"] = list(feature_override)
         gate = self.leakage_gate.evaluate(self.data_engine.df, target=target) if target else {"status":"not_applicable","reason":"No supervised target was selected; Master Agent may route to unsupervised, statistical, anomaly, or time-series analysis."}
+        self.agent_run_id = uuid.uuid4().hex
+        self.agent_thread_id = f"agent-ds-{self.agent_run_id}"
+        os.environ["DSP_AGENT_RUN_ID"] = self.agent_run_id
         self.agent_ds_state = {
             "messages": [HumanMessage(content="Master Agent: analyze the active dataset and choose the appropriate analytical route and specialist sub-agents." )],
             "approved_steps": [], "rejected_steps": [], "user_approved": False,
@@ -2723,7 +2853,8 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
             "objective": objective,
             "target": target, "target_analysis": target_analysis, "feature_candidates": target_analysis.get("suggested_features", []), "image_dataset_path": getattr(self, "cnn_image_dataset_path", ""),
             "compute_mode": self.compute_mode, "leakage_gate": gate, "max_steps": 20, "abort_requested": False, "dataset_card": DatasetCardBuilder.build(self.data_engine.df),
-            "memory": [], "human_approval_evidence": [], "evidence_ids": [],
+            "memory": [], "master_memory": [], "specialist_memory": {}, "human_approval_evidence": [], "evidence_ids": [],
+            "run_id": self.agent_run_id, "thread_id": self.agent_thread_id, "memory_refs": [], "approval_history": [],
         }
         gate_evidence = EvidenceObjectProxy.from_dict(gate, "Scientific/Data Leakage Gate")
         self._add_evidence(gate_evidence)
@@ -2854,8 +2985,14 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
         else:
             msg_box = QMessageBox(self); msg_box.setWindowTitle("Human Approval — Agent Data Scientist")
             points=self._approval_result_points()
-            result_block="\n".join("• "+str(x) for x in points)
-            msg_box.setText(f"{summary}\n\nBrief results / evidence available at this gate:\n{result_block}\n\nApprove this step to continue, Reject to revise/repeat it, or Abort to stop the run safely.")
+            completed = list(self.agent_ds_state.get("completed_bullets") or [])
+            next_actions = list(self.agent_ds_state.get("next_bullets") or [])
+            risks = list(self.agent_ds_state.get("risk_bullets") or [])
+            result_block="\n".join("• "+str(x) for x in points[:6])
+            completed_block="\n".join("• "+str(x) for x in completed[:6]) or "• No governed action has been completed at this gate yet."
+            next_block="\n".join("• "+str(x) for x in next_actions[:6]) or "• The Agent will wait for your decision before taking any further action."
+            risk_block="\n".join("• "+str(x) for x in risks[:5]) if risks else "• No additional high-severity risk was identified by the current automated self-check."
+            msg_box.setText(f"{summary}\n\nWHAT HAS BEEN DONE\n{completed_block}\n\nCURRENT RESULTS / EVIDENCE\n{result_block}\n\nWHAT THE AGENT WILL DO NEXT\n{next_block}\n\nRISKS / LIMITATIONS\n{risk_block}\n\nYour approval is required before the next governed action. Approve to continue, Reject to revise/repeat this step, or Abort to stop safely.")
             approve_btn = msg_box.addButton("Approve", QMessageBox.ButtonRole.AcceptRole)
             reject_btn = msg_box.addButton("Reject", QMessageBox.ButtonRole.RejectRole)
             abort_btn = msg_box.addButton("Abort Run", QMessageBox.ButtonRole.DestructiveRole)
@@ -2872,6 +3009,13 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
             decision = "approved" if clicked is approve_btn else "rejected"
             approval = HumanApprovalEvidence.create(self.agent_ds_state.get("current_step", "unknown"), decision, summary)
             self._add_evidence(approval); self.agent_ds_state.setdefault("human_approval_evidence", []).append(approval)
+            event={"stage":self.agent_ds_state.get("analysis_stage"),"decision":decision,"summary":summary,"completed":completed[:6],"next":next_actions[:6],"evidence_points":points[:6]}
+            self.agent_ds_state.setdefault("approval_history", []).append(event)
+            try:
+                ref=self.agent_memory_store.record(self.agent_run_id or self.agent_ds_state.get("run_id",""), "Master Agent", "human_approval", event, evidence_id=approval.get("evidence_id"))
+                self.agent_ds_state.setdefault("memory_refs", []).append(ref)
+            except Exception:
+                pass
         if not self.agent_ds_state["user_approved"]:
             self.agent_ds_state.setdefault("rejected_steps", []).append(self.agent_ds_state.get("current_step", "unknown"))
             self.agent_ds_state["messages"].append(HumanMessage(content="User rejected the step. Revise or repeat it."))
@@ -2892,6 +3036,11 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
                             "llm_provider":self.llm_config.provider,"local_path":self.llm_config.local_path,"api_base":self.llm_config.api_base})
         self.agent_ds_state = final_state; self.status.showMessage(message)
         self.agent_console.log("Master Agent", final_state.get("current_step","complete"), "complete", message)
+        try:
+            ref=self.agent_memory_store.record(final_state.get("run_id",self.agent_run_id), "Master Agent", "run_complete", {"route":final_state.get("route"),"target":final_state.get("target"),"approved_steps":final_state.get("approved_steps",[]),"evidence_ids":final_state.get("evidence_ids",[])})
+            self.agent_ds_state.setdefault("memory_refs", []).append(ref)
+        except Exception:
+            pass
         try:
             if self.analysis_state.state == AnalysisState.DATA_LOADED.value: self.analysis_state.transition(AnalysisState.QUALITY_CHECKED.value); self.analysis_state.transition(AnalysisState.CONTRACT_VALIDATED.value); self.analysis_state.transition(AnalysisState.ANALYSIS_READY.value)
             if final_state.get("ml_results") or final_state.get("dl_results"): self.analysis_state.transition(AnalysisState.MODEL_READY.value)
@@ -2946,6 +3095,29 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
 """
         QMessageBox.critical(self, "Agent Error", error_msg); self.status.showMessage("Agent error.")
 
+    def show_agent_results(self):
+        """Show the latest Master-Agent specialist results, approvals and evidence in one professional review dialog."""
+        st=self.agent_ds_state or {}
+        d=QDialog(self); d.setWindowTitle("Agent Results & Evidence — Professional Review"); d.resize(1100,760); root=QVBoxLayout(d)
+        tabs=QTabWidget(); root.addWidget(tabs,1)
+        overview=QTextEdit(); overview.setReadOnly(True)
+        overview.setPlainText(json.dumps({"route":st.get("route"),"target":st.get("target"),"stage":st.get("analysis_stage"),"approved_steps":st.get("approved_steps",[]),"rejected_steps":st.get("rejected_steps",[]),"evidence_ids":st.get("evidence_ids",[])},indent=2,default=str)); tabs.addTab(overview,"Master Agent")
+        for label,key in (("Classification","ml_results"),("Regression","ml_results"),("Deep Learning","dl_results"),("Clustering","clustering_results"),("Statistics","statistics_results"),("Time Series","time_series_results")):
+            if label=="Classification" and not ((st.get(key) or {}).get("task")=="classification"): continue
+            if label=="Regression" and not ((st.get(key) or {}).get("task")=="regression"): continue
+            obj=st.get(key) or {}
+            if not obj: continue
+            w=QTextEdit(); w.setReadOnly(True); w.setPlainText(json.dumps(obj,indent=2,default=str)); tabs.addTab(w,label)
+        ev=QTextEdit(); ev.setReadOnly(True); ev.setPlainText(json.dumps(self.evidence_records[-80:],indent=2,default=str)); tabs.addTab(ev,"Evidence & Governance")
+        mem=QTextEdit(); mem.setReadOnly(True)
+        try:
+            mem_payload={"run_id":st.get("run_id"),"thread_id":st.get("thread_id"),"memory_refs":st.get("memory_refs",[]),"approval_history":st.get("approval_history",[]),"persistent_events":self.agent_memory_store.recall(run_id=st.get("run_id"),limit=120)}
+            mem.setPlainText(json.dumps(mem_payload,indent=2,default=str))
+        except Exception as exc:
+            mem.setPlainText(f"Memory review unavailable: {exc}")
+        tabs.addTab(mem,"Agent Memory & LangGraph")
+        close=QPushButton("Close"); close.clicked.connect(d.accept); root.addWidget(close); d.exec()
+
     def run_ai_agent_plot(self):
         """Perform the run ai agent plot operation for this component.
 
@@ -2960,7 +3132,7 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
             QMessageBox.warning(self, "No Data", "Load a dataset before running AI Agent Plot."); return
         if not ml and not dl and not specialist_results:
             QMessageBox.warning(self, "No AI Results", "Run Agent Data Scientist first. Agent Plot is evidence-linked to its target and specialist analytical evidence."); return
-        state={"dataframe":self.data_engine.df.copy(),"ml_results":ml,"dl_results":dl,"specialist_results":specialist_results,"master_decision":self.agent_ds_state.get("master_decision"),"target":self.agent_ds_state.get("target"),"memory":getattr(self,"plot_agent_memory",[]),"llm_provider":cfg.provider,"model_name":cfg.model_name,"api_key":cfg.api_key,"local_path":cfg.local_path,"api_base":cfg.api_base}
+        state={"dataframe":self.data_engine.df.copy(),"ml_results":ml,"dl_results":dl,"specialist_results":specialist_results,"master_decision":self.agent_ds_state.get("master_decision"),"target":self.agent_ds_state.get("target"),"memory":getattr(self,"plot_agent_memory",[]),"llm_provider":cfg.provider,"model_name":cfg.model_name,"api_key":cfg.api_key,"local_path":cfg.local_path,"api_base":cfg.api_base,"ram_gb":cfg.ram_gb,"gpu_vram_gb":cfg.gpu_vram_gb}
         try:
             result=agent_plot_app.invoke(state,config={"configurable":{"thread_id":"agent-plot"}})
         except Exception as exc:
@@ -3025,7 +3197,7 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
             "evidence_dag": self.evidence_dag.to_dict(),
             "llm_provider": cfg.provider, "llm_model": cfg.model_name,
         }
-        self.agent_report_state.update({"llm_provider":cfg.provider,"model_name":cfg.model_name,"api_key":cfg.api_key,"local_path":cfg.local_path})
+        self.agent_report_state.update({"llm_provider":cfg.provider,"model_name":cfg.model_name,"api_key":cfg.api_key,"local_path":cfg.local_path,"ram_gb":cfg.ram_gb,"gpu_vram_gb":cfg.gpu_vram_gb})
         self.report_worker = ReportWorker(agent_report_app, self.agent_report_state)
         self.report_worker.finished.connect(self.on_report_finished); self.report_worker.error.connect(self.on_report_error); self.report_worker.start()
         self.status.showMessage("AI Agent Report is generating...")
@@ -3074,23 +3246,30 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
         """Mirror selected providers into execution snapshots without making them authoritative."""
         for agent_name, state in (("Agent Data Scientist", self.agent_ds_state), ("AI Agent Report", self.agent_report_state)):
             cfg=self._agent_llm_config(agent_name)
-            state.update({"api_key":cfg.api_key,"model_name":cfg.model_name,"llm_provider":cfg.provider,"local_path":cfg.local_path,"api_base":cfg.api_base})
+            state.update({"api_key":cfg.api_key,"model_name":cfg.model_name,"llm_provider":cfg.provider,"local_path":cfg.local_path,"api_base":cfg.api_base,"ram_gb":cfg.ram_gb,"gpu_vram_gb":cfg.gpu_vram_gb})
 
     def select_local_llm(self):
         """Configure an independent provider for one of the four governed AI agents."""
         current = self._agent_llm_config("Agent Data Scientist")
-        dialog=LocalLLMConfigDialog(self, current={"provider":current.provider,"model_name":current.model_name,"api_key":current.api_key,"local_path":current.local_path,"api_base":current.api_base})
+        dialog=LocalLLMConfigDialog(self, current={"provider":current.provider,"model_name":current.model_name,"api_key":current.api_key,"local_path":current.local_path,"api_base":current.api_base,"ram_gb":current.ram_gb,"gpu_vram_gb":current.gpu_vram_gb})
         if dialog.exec()!=QDialog.DialogCode.Accepted: return
         cfg_dict=dialog.get_config(); agent_name=dialog.selected_agent(); cfg=LLMConfig(**cfg_dict)
         check=llm_preflight(cfg)
-        if check.get("status")!="ready":
+        # Configuration may be saved even when current resources are insufficient.
+        # The same resource gate is executed again immediately before the Agent runs.
+        if cfg.provider=="local" and check.get("status")!="ready":
+            if not local_model_available(cfg.model_name, cfg.local_path):
+                QMessageBox.warning(self,"LLM Configuration",check.get("reason","Local model is not available.")); return
+            QMessageBox.warning(self,"LLM Resource Warning",check.get("reason","The selected model may exceed the current RAM/VRAM budget.") + "\n\nThe provider selection has been saved. The Agent will perform the same safety check immediately before execution.")
+        elif check.get("status")!="ready":
             QMessageBox.warning(self,"LLM Configuration",check.get("reason","Provider configuration is not ready.")); return
         self.agent_provider_registry.set(agent_name,cfg)
         if agent_name=="Agent Data Scientist": self.llm_config=cfg
         self._sync_provider_to_agent_states()
         family=check.get("api_provider", "local") if cfg.provider=="api" else "local"
+        resource_note=("" if cfg.provider!="local" else "\nRAM budget: " + str(cfg.ram_gb if cfg.ram_gb is not None else "Auto-detect") + " GiB; GPU VRAM budget: " + str(cfg.gpu_vram_gb if cfg.gpu_vram_gb is not None else "Auto-detect") + " GiB")
         self.status.showMessage(f"AI provider configured for {agent_name}: {cfg.provider} / {cfg.model_name}")
-        QMessageBox.information(self,"AI Provider Ready",f"Agent: {agent_name}\nProvider: {cfg.provider}\nModel: {cfg.model_name}\nRoute: {family}")
+        QMessageBox.information(self,"AI Provider Ready",f"Agent: {agent_name}\nProvider: {cfg.provider}\nModel: {cfg.model_name}\nRoute: {family}"+resource_note)
 
     # ============================================================
     # MACRO EDITOR
@@ -3268,8 +3447,8 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
                 if kind=="Classification": result=ClassificationAnalysisEngine.run(df,target.currentText(),test_size=test.value(),folds=folds.value(),scaling=scaling.currentText(),pca=pca.isChecked())
                 else: result=RegressionAnalysisEngine.run(df,target.currentText(),test_size=test.value(),folds=folds.value(),scaling=scaling.currentText(),pca=pca.isChecked())
                 holder["result"]=result
-                methods_text.setPlainText(json.dumps({"methods":result.get("methods"),"best_model":result.get("best_model"),"selection_metric":result.get("selection_metric"),"validation":result.get("validation")},indent=2,default=str))
-                eval_text.setPlainText(json.dumps({"best_test_metrics":result.get("best_test_metrics"),"preprocessing":result.get("preprocessing"),"class_distribution":result.get("class_distribution"),"feature_screening":result.get("feature_screening"),"deployment":result.get("deployment")},indent=2,default=str))
+                methods_text.setPlainText(json.dumps({"methods":result.get("methods"),"best_model":result.get("best_model"),"selection_metric":result.get("selection_metric"),"validation":result.get("validation"),"convergence_policy":"services.mlp_training.MLPPolicy"},indent=2,default=str))
+                eval_text.setPlainText(json.dumps({"best_test_metrics":result.get("best_test_metrics"),"preprocessing":result.get("preprocessing"),"convergence":{k:v.get("convergence") for k,v in (result.get("methods") or {}).items() if isinstance(v,dict) and v.get("convergence")},"class_distribution":result.get("class_distribution"),"feature_screening":result.get("feature_screening"),"deployment":result.get("deployment")},indent=2,default=str))
                 deploy_text.setPlainText(json.dumps(result.get("deployment",{}),indent=2,default=str)+"\n\nFinal test partition is locked and must not be used for tuning or feature selection.")
                 tabs.setCurrentIndex(2); self.status.showMessage(f"Professional {kind} Analysis completed.")
             except Exception as exc: QMessageBox.critical(d,f"{kind} Analysis Error",str(exc))
@@ -3460,7 +3639,7 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
         path,_=QFileDialog.getSaveFileName(self,"Save PowerPoint Presentation","DataScienceStudioPro_Analysis_Presentation.pptx","PowerPoint (*.pptx)")
         if not path:return
         from agent.graph_presentation import agent_presentation_app
-        state={"report_evidence":json_safe(evidence),"report_text":self.agent_report_state.get("report_text",""),"plot_results":json_safe(self.agent_ds_state.get("plot_results",{})),"memory":getattr(self,"presentation_agent_memory",[]),"output_path":path,"title":"Data Science Studio Pro — Analysis Presentation","presenter":presenter.strip() or "Data Science Studio Pro","llm_provider":cfg.provider,"model_name":cfg.model_name,"api_key":cfg.api_key,"local_path":cfg.local_path,"api_base":cfg.api_base}
+        state={"report_evidence":json_safe(evidence),"report_text":self.agent_report_state.get("report_text",""),"plot_results":json_safe(self.agent_ds_state.get("plot_results",{})),"memory":getattr(self,"presentation_agent_memory",[]),"output_path":path,"title":"Data Science Studio Pro — Analysis Presentation","presenter":presenter.strip() or "Data Science Studio Pro","llm_provider":cfg.provider,"model_name":cfg.model_name,"api_key":cfg.api_key,"local_path":cfg.local_path,"api_base":cfg.api_base,"ram_gb":cfg.ram_gb,"gpu_vram_gb":cfg.gpu_vram_gb}
         self.presentation_agent_worker=SimpleGraphWorker(agent_presentation_app,state,{"configurable":{"thread_id":"presentation"}}); self.presentation_agent_worker.finished.connect(self.on_presentation_agent_finished); self.presentation_agent_worker.error.connect(lambda e:QMessageBox.critical(self,"Presentation Agent",e)); self.presentation_agent_worker.start(); self.status.showMessage("AI Agent Presentation is generating the PowerPoint presentation…")
 
     def on_presentation_agent_finished(self,result):
@@ -3469,7 +3648,13 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
 The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
 """
         self.presentation_agent_memory=result.get("memory",[]); self.last_presentation_path=result.get("output_path");
-        if result.get("status")=="complete": QMessageBox.information(self,"Presentation Created",result.get("summary")+"\n\nPowerPoint file: "+str(result.get("output_path")))
+        if result.get("status")=="complete":
+            path=str(result.get("output_path") or "")
+            QMessageBox.information(self,"Presentation Created",result.get("summary","PowerPoint presentation created.")+"\n\nPowerPoint file: "+path)
+            if path and Path(path).exists():
+                try:
+                    os.startfile(path) if os.name=="nt" else None
+                except Exception: pass
         else: QMessageBox.critical(self,"Presentation Agent",result.get("error","Presentation generation failed."))
 
     # ============================================================
@@ -3948,8 +4133,14 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
 The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
 """
             name=f"Sheet {len(self.sheet_manager.sheets)+1}"
-            snap=snapshot(name); self.sheet_manager.sheets[name]={"data":self.data_engine.df.copy(),"agg_func":"sum","view_snapshot":snap,"x_col":None,"y_col":None,"mark_type":self.chart_combo.currentText(),"color_col":self._mark_value("Color"),"size_col":self._mark_value("Size")}
-            sheet_list.addItem(name); sheet_list.setCurrentRow(sheet_list.count()-1); refresh_preview()
+            blank={"name":name,"rows":[],"columns":[],"chart":"auto","marks":{k:[] for k in self.marks_widgets},"shelf_aggregations":{"Rows":{},"Columns":{}},"agg_func":"sum","data":self.data_engine.df.copy()}
+            self.sheet_manager.sheets[name]={"data":self.data_engine.df.copy(),"agg_func":"sum","view_snapshot":blank,"view_revision":0,"x_col":None,"y_col":None,"mark_type":"auto","color_col":None,"size_col":None}
+            try: self.sheet_manager.activate(name)
+            except Exception: pass
+            self.rows_input.clear(); self.cols_input.clear(); self.chart_combo.setCurrentText("auto")
+            for combo in self.marks_widgets.values(): combo.clear_selection()
+            self.shelf_aggregations={"Rows":{},"Columns":{}}
+            sheet_list.addItem(name); sheet_list.setCurrentRow(sheet_list.count()-1); self._refresh_navigation_combos(); self.update_plot(); refresh_preview()
         def duplicate_sheet():
             """Perform the duplicate sheet operation for this component.
 
@@ -3995,25 +4186,47 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
         story_tab=QWidget(); gl=QVBoxLayout(story_tab)
         controls=QHBoxLayout(); story_name=QLineEdit("Story 1"); new_story=QPushButton("New Story"); add=QPushButton("Add Selected Sheets"); remove=QPushButton("Remove"); up=QPushButton("Move Up"); down=QPushButton("Move Down"); bg=QPushButton("Background"); controls.addWidget(QLabel("Story title:")); controls.addWidget(story_name); controls.addWidget(new_story); controls.addWidget(add); controls.addWidget(remove); controls.addWidget(up); controls.addWidget(down); controls.addWidget(bg); controls.addStretch(); gl.addLayout(controls)
         body=QSplitter(); gl.addWidget(body,1); available=QListWidget(); available.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection); ordered=QListWidget(); ordered.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove); body.addWidget(available); body.addWidget(ordered); body.setSizes([260,260])
-        editor=QVBoxLayout(); editor_w=QWidget(); editor_w.setLayout(editor); body.addWidget(editor_w); caption=QTextEdit(); caption.setPlaceholderText("Story Point Text / analytical explanation…"); caption.setMaximumHeight(120); editor.addWidget(QLabel("Story Point Text")); editor.addWidget(caption)
-        story_view=StoryCanvasView(); editor.addWidget(story_view,1); exportrow=QHBoxLayout(); pngb=QPushButton("Export Story PNG"); pdfb=QPushButton("Export Story PDF"); exportrow.addWidget(pngb); exportrow.addWidget(pdfb); editor.addLayout(exportrow)
+        editor=QVBoxLayout(); editor_w=QWidget(); editor_w.setLayout(editor); body.addWidget(editor_w); editor.addWidget(QLabel("Story Point Figure Title")); story_point_title=QLineEdit(); story_point_title.setPlaceholderText("Editable figure title"); editor.addWidget(story_point_title); editor.addWidget(QLabel("Story Point Text / Analytical Explanation"))
+        text_tools=QHBoxLayout(); font_box=QFontComboBox(); size_box=QComboBox(); size_box.addItems(["10","11","12","14","16","18","20","24","28","32","36"]); size_box.setCurrentText("14")
+        boldb=QPushButton("B"); italicb=QPushButton("I"); underb=QPushButton("U"); colorb=QPushButton("Text Color"); presentb=QPushButton("Presentation Mode")
+        for b in (boldb,italicb,underb): b.setCheckable(True); text_tools.addWidget(b)
+        text_tools.insertWidget(0,font_box); text_tools.insertWidget(1,size_box); text_tools.addWidget(colorb); text_tools.addStretch(); text_tools.addWidget(presentb); editor.addLayout(text_tools)
+        caption=QTextEdit(); caption.setAcceptRichText(True); caption.setPlaceholderText("Write the analytical message, interpretation, context, or speaker-facing explanation…"); caption.setMinimumHeight(130); editor.addWidget(caption)
+        story_view=StoryCanvasView(); editor.addWidget(story_view,1); exportrow=QHBoxLayout(); pngb=QPushButton("Export Story PNG"); pdfb=QPushButton("Export Story PDF"); exportrow.addWidget(pngb); exportrow.addWidget(pdfb); exportrow.addStretch(); editor.addLayout(exportrow)
         for name in self.sheet_manager.sheets: available.addItem(name)
-        story_data={"name":"Story 1","items":[],"captions":{},"background":"#f3f6f8"}
+        story_data={"name":"Story 1","items":[],"titles":{},"captions":{},"background":"#f3f6f8","caption_formats":{},"positions":{},"sizes":{}}
+        self.story_workspace_state.setdefault("draft", story_data)
+        def persist_story_state():
+            """Persist the active Story as an editable analytical communication object."""
+            story_data["items"] = get_ordered() if "ordered" in locals() else story_data.get("items", [])
+            story = {k: story_data.get(k) for k in ("name","items","titles","captions","background","caption_formats","positions","sizes")}
+            stories = [x for x in self.story_workspace_state.get("stories", []) if x.get("name") != story["name"]]
+            stories.append(story); self.story_workspace_state["stories"] = stories; self.story_workspace_state["draft"] = story
         def get_ordered():
             """Perform the get ordered operation for this component.
 
 The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
 """
             return [ordered.item(i).text() for i in range(ordered.count())]
+        def capture_card_geometry():
+            """Capture user-edited Story card positions/sizes before a preview rebuild."""
+            for graphics_item in story_view.scene().items():
+                if isinstance(graphics_item, StoryCardItem):
+                    pos=graphics_item.pos(); rect=graphics_item.rect()
+                    story_data.setdefault("positions",{})[graphics_item.sheet_name]=[float(pos.x()),float(pos.y())]
+                    story_data.setdefault("sizes",{})[graphics_item.sheet_name]=[float(rect.width()),float(rect.height())]
+
         def add_story_cards():
             """Perform the add story cards operation for this component.
 
 The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
 """
-            story_view.clear_cards(); story_view.set_background(QColor(story_data.get("background","#f3f6f8"))); story_view.add_title(story_data.get("name","Story 1"))
+            capture_card_geometry(); story_view.clear_cards(); story_view.set_background(QColor(story_data.get("background","#f3f6f8"))); story_view.add_title(story_data.get("name","Story 1"))
             x,y=25,65
             for i,name in enumerate(get_ordered()):
-                snap=get_snap(name); fig=render_snapshot(snap); buf=io.BytesIO(); fig.savefig(buf,format="png",dpi=100,bbox_inches="tight"); buf.seek(0); pm=__import__("PyQt6.QtGui",fromlist=["QPixmap"]).QPixmap(); pm.loadFromData(buf.getvalue(),"PNG"); card=StoryCardItem(QRectF(0,0,380,250),pm,name); card.setPos(x,y); story_view.scene().addItem(card); x+=400
+                snap=get_snap(name); fig=render_snapshot(snap); buf=io.BytesIO(); fig.savefig(buf,format="png",dpi=100,bbox_inches="tight"); buf.seek(0); pm=__import__("PyQt6.QtGui",fromlist=["QPixmap"]).QPixmap(); pm.loadFromData(buf.getvalue(),"PNG"); card=StoryCardItem(QRectF(0,0,380,250),pm,story_data.get("titles",{}).get(name,name)); card.sheet_name=name; card.set_caption(story_data.get("captions",{}).get(name,"")); pos=story_data.get("positions",{}).get(name); size=story_data.get("sizes",{}).get(name);
+                if size: card.setRect(0,0,float(size[0]),float(size[1])); card._sync_image()
+                card.setPos(*(pos if pos else (x,y))); story_view.scene().addItem(card); x+=400
                 if x+380>1150: x=25; y+=275
             story_view.scene().setSceneRect(0,0,max(1200,x+400),max(600,y+300))
         def add_sheet_story():
@@ -4023,15 +4236,15 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
 """
             for item in available.selectedItems():
                 name=item.text()
-                if name not in story_data["items"]: story_data["items"].append(name); ordered.addItem(name); story_data["captions"][name]=""
-            add_story_cards()
+                if name not in story_data["items"]: story_data["items"].append(name); ordered.addItem(name); story_data["captions"][name]=""; story_data["caption_formats"][name]={"font":"Arial","size":14,"color":"#222222"}
+            persist_story_state(); add_story_cards()
         def remove_story():
             """Perform the remove story operation for this component.
 
 The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
 """
             i=ordered.currentRow()
-            if i>=0: story_data["items"].pop(i) if i<len(story_data["items"]) else None; ordered.takeItem(i); add_story_cards()
+            if i>=0: story_data["items"].pop(i) if i<len(story_data["items"]) else None; ordered.takeItem(i); persist_story_state(); add_story_cards()
         def move(delta):
             """Perform the move operation for this component.
 
@@ -4039,33 +4252,117 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
 """
             i=ordered.currentRow(); j=i+delta
             if i<0 or j<0 or j>=ordered.count():return
-            item=ordered.takeItem(i); ordered.insertItem(j,item); ordered.setCurrentRow(j); story_data["items"]=get_ordered(); add_story_cards()
+            item=ordered.takeItem(i); ordered.insertItem(j,item); ordered.setCurrentRow(j); story_data["items"]=get_ordered(); persist_story_state(); add_story_cards()
         def caption_changed():
             """Perform the caption changed operation for this component.
 
 The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
 """
             item=ordered.currentItem()
-            if item: story_data["captions"][item.text()]=caption.toPlainText()
+            if item:
+                story_data["captions"][item.text()]=caption.toHtml()
+                for graphics_item in story_view.scene().items():
+                    if isinstance(graphics_item, StoryCardItem) and graphics_item.sheet_name == item.text():
+                        graphics_item.set_caption(caption.toHtml())
+                        break
+                persist_story_state()
         def select_story_item(cur,prev):
             """Perform the select story item operation for this component.
 
 The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
 """
-            if cur: caption.setPlainText(story_data["captions"].get(cur.text(),""))
+            caption.blockSignals(True); story_point_title.blockSignals(True)
+            if cur:
+                story_point_title.setText(story_data.get("titles",{}).get(cur.text(),cur.text()))
+                caption.setHtml(story_data["captions"].get(cur.text(),""))
+                fmt=story_data.get("caption_formats",{}).get(cur.text(),{})
+                if fmt.get("font"): font_box.setCurrentFont(QFont(fmt["font"]))
+                if fmt.get("size"): size_box.setCurrentText(str(fmt["size"]))
+            else:
+                story_point_title.clear(); caption.clear()
+            story_point_title.blockSignals(False); caption.blockSignals(False)
+        def title_changed():
+            """Persist the editable figure title for the selected Story point."""
+            item=ordered.currentItem()
+            if not item: return
+            story_data.setdefault("titles",{})[item.text()]=story_point_title.text().strip() or item.text()
+            for graphics_item in story_view.scene().items():
+                if isinstance(graphics_item, StoryCardItem) and graphics_item.sheet_name == item.text():
+                    graphics_item.text_item.setPlainText(story_data["titles"][item.text()]); break
+            persist_story_state()
+
+        def set_font():
+            """Apply the selected font to the current rich-text selection."""
+            cursor=caption.textCursor(); fmt=cursor.charFormat(); fmt.setFont(font_box.currentFont()); caption.mergeCurrentCharFormat(fmt); item=ordered.currentItem();
+            if item: story_data.setdefault("caption_formats",{}).setdefault(item.text(),{})["font"]=font_box.currentFont().family(); persist_story_state()
+        def set_size():
+            """Apply the selected point size to the current rich-text selection."""
+            fmt=caption.currentCharFormat(); fmt.setFontPointSize(float(size_box.currentText())); caption.mergeCurrentCharFormat(fmt); item=ordered.currentItem();
+            if item: story_data.setdefault("caption_formats",{}).setdefault(item.text(),{})["size"]=int(size_box.currentText()); persist_story_state()
+        def toggle_weight():
+            """Toggle bold formatting for the current rich-text selection."""
+            fmt=caption.currentCharFormat(); fmt.setFontWeight(QFont.Weight.Bold if boldb.isChecked() else QFont.Weight.Normal); caption.mergeCurrentCharFormat(fmt)
+        def toggle_italic():
+            """Toggle italic formatting for the current rich-text selection."""
+            fmt=caption.currentCharFormat(); fmt.setFontItalic(italicb.isChecked()); caption.mergeCurrentCharFormat(fmt)
+        def toggle_underline():
+            """Toggle underline formatting for the current rich-text selection."""
+            fmt=caption.currentCharFormat(); fmt.setFontUnderline(underb.isChecked()); caption.mergeCurrentCharFormat(fmt)
+        def choose_text_color():
+            """Choose a professional story-text color."""
+            c=QColorDialog.getColor(QColor("#222222"),d,"Story Text Color")
+            if c.isValid():
+                fmt=caption.currentCharFormat(); fmt.setForeground(c); caption.mergeCurrentCharFormat(fmt)
+        def story_presentation_mode():
+            """Open an independent PowerPoint-like Story presentation window; it never overlays the Story editor."""
+            names=get_ordered()
+            if not names:
+                QMessageBox.warning(d,"Story Presentation","Add at least one Sheet to the Story first."); return
+            viewer=QMainWindow(None)
+            viewer.setWindowTitle(story_data.get("name","Story")+" — Presentation Mode")
+            viewer.setWindowFlag(Qt.WindowType.Window,True)
+            viewer.setWindowFlag(Qt.WindowType.FramelessWindowHint,True)
+            viewer.setStyleSheet("QMainWindow{background:#111;} QLabel{color:white;}")
+            central=QWidget(); viewer.setCentralWidget(central); vl=QVBoxLayout(central); vl.setContentsMargins(28,22,28,18); vl.setSpacing(12)
+            header=QHBoxLayout(); title=QLabel(story_data.get("name","Story")); title.setFont(QFont("Arial",22,QFont.Weight.Bold)); header.addWidget(title); header.addStretch(); counter=QLabel(); header.addWidget(counter); vl.addLayout(header)
+            slide=QWidget(); slide.setStyleSheet("QWidget{background:white;border-radius:4px;}"); sl=QVBoxLayout(slide); sl.setContentsMargins(24,20,24,20)
+            slide_title=QLabel(); slide_title.setStyleSheet("color:#12355b;"); slide_title.setFont(QFont("Arial",20,QFont.Weight.Bold)); sl.addWidget(slide_title)
+            image_label=QLabel(); image_label.setAlignment(Qt.AlignmentFlag.AlignCenter); image_label.setMinimumHeight(450); sl.addWidget(image_label,1)
+            text_label=QLabel(); text_label.setTextFormat(Qt.TextFormat.RichText); text_label.setWordWrap(True); text_label.setStyleSheet("color:#222;"); text_label.setFont(QFont("Arial",13)); sl.addWidget(text_label)
+            vl.addWidget(slide,1)
+            nav=QHBoxLayout(); prev=QPushButton("◀  Previous"); nextb=QPushButton("Next  ▶"); exitb=QPushButton("Exit Presentation"); nav.addWidget(prev); nav.addStretch(); nav.addWidget(exitb); nav.addStretch(); nav.addWidget(nextb); vl.addLayout(nav)
+            index=[0]
+            closed=[False]
+            def show_point():
+                """Render only while the presentation widgets still belong to a live window."""
+                if closed[0] or viewer is None or not viewer.isVisible(): return
+                try:
+                    name=names[index[0]]; snap=get_snap(name); fig=render_snapshot(snap); buf=io.BytesIO(); fig.savefig(buf,format="png",dpi=150,bbox_inches="tight",facecolor="white"); buf.seek(0); pm=__import__("PyQt6.QtGui",fromlist=["QPixmap"]).QPixmap();
+                    if pm.loadFromData(buf.getvalue(),"PNG") and image_label is not None and not image_label.isHidden():
+                        image_label.setPixmap(pm.scaled(max(1,image_label.width()),max(1,image_label.height()),Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation)); slide_title.setText(name); text_label.setText(story_data["captions"].get(name, "")); counter.setText(f"{index[0]+1} / {len(names)}")
+                except RuntimeError:
+                    closed[0]=True
+            def go(delta):
+                if not closed[0]: index[0]=max(0,min(len(names)-1,index[0]+delta)); show_point()
+            def close_viewer():
+                closed[0]=True; viewer.close()
+            viewer.destroyed.connect(lambda *_: closed.__setitem__(0,True))
+            prev.clicked.connect(lambda:go(-1)); nextb.clicked.connect(lambda:go(1)); exitb.clicked.connect(close_viewer)
+            viewer.resize(self.size()); viewer.showFullScreen(); QTimer.singleShot(150,show_point)
+
         def new_story_fn():
             """Perform the new story fn operation for this component.
 
 The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
 """
-            story_data["name"]=story_name.text().strip() or f"Story {len(self.story_workspace_state.get('stories',[]))+1}"; story_data["items"]=[]; story_data["captions"]={}; ordered.clear(); caption.clear(); self.active_story_name=story_data["name"]; self.story_workspace_state.setdefault("stories",[]); existing=[x for x in self.story_workspace_state["stories"] if x.get("name")!=story_data["name"]]; existing.append({"name":story_data["name"],"items":[]}); self.story_workspace_state["stories"]=existing; self._refresh_navigation_combos(); add_story_cards()
+            story_data["name"]=story_name.text().strip() or f"Story {len(self.story_workspace_state.get('stories',[]))+1}"; story_data["items"]=[]; story_data["titles"]={}; story_data["captions"]={}; story_data["caption_formats"]={}; ordered.clear(); caption.clear(); self.active_story_name=story_data["name"]; self.story_workspace_state.setdefault("stories",[]); existing=[x for x in self.story_workspace_state["stories"] if x.get("name")!=story_data["name"]]; existing.append({"name":story_data["name"],"items":[],"titles":{},"captions":{},"background":story_data.get("background","#f3f6f8"),"caption_formats":{},"positions":{},"sizes":{}}); self.story_workspace_state["stories"]=existing; self._refresh_navigation_combos(); persist_story_state(); add_story_cards()
         def choose_bg():
             """Perform the choose bg operation for this component.
 
 The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
 """
             c=QColorDialog.getColor(QColor(story_data.get("background","#f3f6f8")),d,"Story Background")
-            if c.isValid(): story_data["background"]=c.name(); add_story_cards()
+            if c.isValid(): story_data["background"]=c.name(); persist_story_state(); add_story_cards()
         def export_story(fmt):
             """Perform the export story operation for this component.
 
@@ -4080,12 +4377,12 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
                     from matplotlib.backends.backend_pdf import PdfPages
                     from matplotlib.figure import Figure
                     with PdfPages(path) as pdf:
-                        fig=Figure(figsize=(13.333,7.5),dpi=120); canvas=FigureCanvas(fig); render_snapshot(get_snap(story_data["items"][0]),canvas); pdf.savefig(fig,bbox_inches="tight")
+                        first=story_data["items"][0]; fig=Figure(figsize=(13.333,7.5),dpi=120); canvas=FigureCanvas(fig); render_snapshot(get_snap(first),canvas); fig.suptitle(story_data.get("titles",{}).get(first,first),fontsize=18,fontweight="bold"); fig.text(.08,.025,story_data.get("captions",{}).get(first,""),fontsize=10,va="bottom"); pdf.savefig(fig,bbox_inches="tight")
                         for name in story_data["items"][1:]:
-                            fig=Figure(figsize=(13.333,7.5),dpi=120); canvas=FigureCanvas(fig); render_snapshot(get_snap(name),canvas); pdf.savefig(fig,bbox_inches="tight")
+                            fig=Figure(figsize=(13.333,7.5),dpi=120); canvas=FigureCanvas(fig); render_snapshot(get_snap(name),canvas); fig.suptitle(story_data.get("titles",{}).get(name,name),fontsize=18,fontweight="bold"); fig.text(.08,.025,story_data.get("captions",{}).get(name,""),fontsize=10,va="bottom"); pdf.savefig(fig,bbox_inches="tight")
                 self.status.showMessage(f"Story exported to {path}")
             except Exception as exc: QMessageBox.critical(d,"Story Export",str(exc))
-        add.clicked.connect(add_sheet_story); remove.clicked.connect(remove_story); up.clicked.connect(lambda:move(-1)); down.clicked.connect(lambda:move(1)); ordered.currentItemChanged.connect(select_story_item); caption.textChanged.connect(caption_changed); new_story.clicked.connect(new_story_fn); bg.clicked.connect(choose_bg); pngb.clicked.connect(lambda:export_story("png")); pdfb.clicked.connect(lambda:export_story("pdf")); add_story_cards(); tabs.addTab(story_tab,"Stories")
+        story_point_title.textChanged.connect(title_changed); add.clicked.connect(add_sheet_story); remove.clicked.connect(remove_story); up.clicked.connect(lambda:move(-1)); down.clicked.connect(lambda:move(1)); ordered.currentItemChanged.connect(select_story_item); caption.textChanged.connect(caption_changed); font_box.currentFontChanged.connect(lambda f:set_font()); size_box.currentTextChanged.connect(lambda _:set_size()); boldb.toggled.connect(lambda _:toggle_weight()); italicb.toggled.connect(lambda _:toggle_italic()); underb.toggled.connect(lambda _:toggle_underline()); colorb.clicked.connect(choose_text_color); presentb.clicked.connect(story_presentation_mode); new_story.clicked.connect(new_story_fn); bg.clicked.connect(choose_bg); pngb.clicked.connect(lambda:export_story("png")); pdfb.clicked.connect(lambda:export_story("pdf")); add_story_cards(); tabs.addTab(story_tab,"Stories")
         d.exec()
         self._refresh_navigation_combos()
 
@@ -4352,6 +4649,28 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
         cols=[] if self.data_engine.df is None else [str(c) for c in self.data_engine.df.columns]
         for combo in getattr(self,"marks_widgets",{}).values(): combo.sync_fields(cols)
 
+    def _sync_active_sheet_view_snapshot(self):
+        """Persist the current analytical view into the active Sheet for Story/report reproducibility."""
+        try:
+            name=self.sheet_manager.active_sheet
+            if not name or name not in self.sheet_manager.sheets or self.data_engine.df is None:
+                return
+            cfg=self.sheet_manager.sheets.setdefault(name,{})
+            snap={
+                "name":name,
+                "rows":self.viz_engine.parse_shelf(self.rows_input.text()),
+                "columns":self.viz_engine.parse_shelf(self.cols_input.text()),
+                "chart":self.chart_combo.currentText(),
+                "marks":{k:self._mark_values(k) for k in self.marks_widgets},
+                "shelf_aggregations":json.loads(json.dumps(self.shelf_aggregations,default=str)),
+                "agg_func":cfg.get("agg_func","sum"),
+                "data":self.data_engine.df.copy(),
+            }
+            cfg["view_snapshot"]=snap
+            cfg["view_revision"]=int(cfg.get("view_revision",0))+1
+        except Exception:
+            pass
+
     def update_plot(self):
         """Rebuild the plot pane from current shelves and remove all stale auxiliary axes/artists."""
         # Matplotlib creates additional axes for twin-axis charts and colorbars.
@@ -4372,6 +4691,7 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
         if df is None:
             self.ax.text(.5,.5,"No data loaded",ha="center",va="center"); self.canvas.draw(); return
         self._sync_active_dataset()
+        self._sync_active_sheet_view_snapshot()
         rows=[x for x in self.viz_engine.parse_shelf(self.rows_input.text()) if x in df.columns]
         cols=[x for x in self.viz_engine.parse_shelf(self.cols_input.text()) if x in df.columns]
         chart=self.chart_combo.currentText()
@@ -4561,7 +4881,7 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
             self._install_hover_handler(work,color_col,tooltip_cols,size_col,rows,cols)
         except Exception as exc:
             self.ax.text(.5,.5,f"Plot error: {exc}",ha="center",va="center")
-        self.fig.subplots_adjust(left=.10,right=.97,bottom=.18,top=.90); self.canvas.draw()
+        self.fig.subplots_adjust(left=.10,right=(.78 if self.ax.get_legend() is not None else .97),bottom=.18,top=.90); self.canvas.draw()
 
     def _style_legend(self, legend, title=None):
         """Professional legend defaults: outside the axes, readable, draggable."""

@@ -34,6 +34,8 @@ class PlotAgentState(TypedDict, total=False):
     model_name: str
     api_key: str
     local_path: str
+    ram_gb: float | None
+    gpu_vram_gb: float | None
 
 
 def _numeric(df):
@@ -217,14 +219,18 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
             elif kind=="count":
                 work=df[fields[0]].astype(str).value_counts().head(30).rename_axis(fields[0]).reset_index(name="Count"); fig=px.bar(work,x=fields[0],y="Count",title=p["title"],text_auto=True)
             if fig is None: continue
-            fig.update_layout(template="plotly_white",margin=dict(l=60,r=30,t=70,b=70),font=dict(size=13))
+            fig.update_layout(template="plotly_white",margin=dict(l=70,r=45,t=90,b=75),font=dict(size=13),title=dict(font=dict(size=20)),hoverlabel=dict(font_size=12))
+            if kind in {"scatter","target_scatter"}:
+                fig.add_annotation(text="Descriptive association; not a causal conclusion",xref="paper",yref="paper",x=0,y=1.02,showarrow=False,font=dict(size=10,color="#666666"))
             insights=[]
             if kind=="category_bar":
                 top=df.groupby(fields[0],dropna=False)[fields[1]].sum().sort_values(ascending=False).head(3); insights.append("Top categories by aggregated measure: "+", ".join(f"{k} ({v:.3g})" for k,v in top.items()))
             if kind in {"scatter","target_scatter"}:
                 c=df[[fields[0],fields[1]]].corr().iloc[0,1]
                 if np.isfinite(c): insights.append(f"Pearson correlation = {c:.3f}; association only, not a causal conclusion.")
-            plots.append({"kind":kind,"title":p["title"],"fields":fields,"quantity":p.get("quantity"),"rationale":p["rationale"],"insights":insights,"figure_json":fig.to_json()})
+            caption=f"{p['title']}. Evidence-linked view of {', '.join(map(str,fields))}."
+            explanation=("This visualization is descriptive and should be interpreted together with the recorded analytical evidence. " + ("The strongest visible pattern is summarized in the findings." if insights else "The figure is intended to expose distribution, comparison or temporal structure relevant to the analytical question."))
+            plots.append({"kind":kind,"title":p["title"],"caption":caption,"explanation":explanation,"fields":fields,"quantity":p.get("quantity"),"rationale":p["rationale"],"insights":insights,"figure_json":fig.to_json()})
         except Exception as exc:
             plots.append({"kind":p["kind"],"title":p["title"],"fields":p["fields"],"quantity":p.get("quantity"),"rationale":p["rationale"],"error":str(exc)})
     model_df=_model_comparison(state.get("ml_results"),state.get("dl_results"))
@@ -233,7 +239,7 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
         md=model_df[model_df["Metric"]==metric]
         if not md.empty:
             fig=px.bar(md,x="Model",y="Value",color="Agent",text="Value",title=f"Model Comparison — {metric}",barmode="group"); fig.update_layout(template="plotly_white")
-            plots.append({"kind":"model_comparison","title":f"Model Comparison — {metric}","fields":["Model",metric],"quantity":"recorded model metric","rationale":"Supplemental comparison of recorded model evaluation evidence.","insights":[],"figure_json":fig.to_json()})
+            plots.append({"kind":"model_comparison","title":f"Model Comparison — {metric}","fields":["Model",metric],"quantity":"recorded model metric","rationale":"Supplemental comparison of recorded model evaluation evidence.","caption":f"Model comparison using the recorded {metric} evaluation metric.","explanation":"Bars compare only the recorded evaluation values; they do not establish causal superiority or future performance.","insights":[],"figure_json":fig.to_json()})
     return {"status":"ok","plots":plots,"plot_quantities":state.get("plot_quantities",{}),"llm_reasoning":state.get("llm_reasoning",""),"summary":f"Agent Plot generated {len(plots)} analytical visualizations using Data Scientist evidence, deterministic validation and LLM-assisted selection."}
 
 workflow=StateGraph(PlotAgentState); workflow.add_node("plan",_plan_node); workflow.add_node("render",_render_node); workflow.set_entry_point("plan"); workflow.add_edge("plan","render"); workflow.add_edge("render",END); agent_plot_app=workflow.compile()

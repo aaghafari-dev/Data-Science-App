@@ -1,3 +1,12 @@
+import os
+
+# Windows/joblib runtime policy.  Some Windows installations cannot expose
+# physical-core information to loky and emit WinError 2.  The application
+# deliberately uses bounded parallelism, so use the logical CPU count as an
+# explicit upper bound instead of letting loky probe the missing utility.
+if os.name == "nt":
+    os.environ.setdefault("LOKY_MAX_CPU_COUNT", str(os.cpu_count() or 1))
+
 # config.py
 """Central application configuration and model catalog."""
 
@@ -42,6 +51,9 @@ LOCAL_LLM_MODELS = {
 
 ALL_LLM_MODELS = CLOUD_LLM_MODELS + list(LOCAL_LLM_MODELS.keys())
 DEFAULT_API_KEY = ""
+# User-selectable resource profile for local LLM execution. None means auto-detect.
+LOCAL_LLM_RAM_OPTIONS_GB = ["Auto-detect", "8", "16", "24", "32", "48", "64", "128"]
+LOCAL_LLM_GPU_VRAM_OPTIONS_GB = ["Auto-detect", "2", "4", "8", "12", "16", "18", "24", "32", "48", "64"]
 HF_CACHE_DIR = r"C:\Users\ASUS\.cache\huggingface\hub"
 
 # API provider metadata. These are optional integrations; the application can

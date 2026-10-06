@@ -7,6 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
+import os
 
 @dataclass
 class AgentMemory:
@@ -20,10 +21,31 @@ class AgentMemory:
 
 The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
 """
+        safe_content = self._sanitize(content)
         safe = {"time": datetime.now(timezone.utc).isoformat(), "kind": kind,
-                "content": content, "evidence_id": evidence_id}
+                "content": safe_content, "evidence_id": evidence_id}
         self.items.append(safe)
+        run_id = os.environ.get("DSP_AGENT_RUN_ID", "").strip()
+        if run_id:
+            try:
+                from services.agent_memory_store import AgentMemoryStore
+                AgentMemoryStore().record(run_id, self.role, kind, safe_content, evidence_id=evidence_id)
+            except Exception:
+                pass
         self.items = self.items[-self.max_items:]
+
+
+    @staticmethod
+    def _sanitize(value: Any) -> Any:
+        """Remove credential-like fields before analytical memory is persisted."""
+        secret_names={"api_key","apikey","password","passwd","secret","token","authorization","access_token"}
+        if isinstance(value, dict):
+            return {str(k): "***redacted***" if str(k).lower() in secret_names else AgentMemory._sanitize(v) for k,v in value.items()}
+        if isinstance(value, list):
+            return [AgentMemory._sanitize(v) for v in value]
+        if isinstance(value, tuple):
+            return [AgentMemory._sanitize(v) for v in value]
+        return value
 
     def recall(self, kind: str | None = None) -> list[dict[str, Any]]:
         """Perform the recall operation for this component.

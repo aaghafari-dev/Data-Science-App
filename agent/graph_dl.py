@@ -7,12 +7,11 @@ from __future__ import annotations
 
 from typing import Any
 import time
-import warnings
-from sklearn.exceptions import ConvergenceWarning
 
 import numpy as np
 import pandas as pd
 from sklearn.neural_network import MLPClassifier, MLPRegressor
+from services.mlp_training import make_mlp, fit_with_convergence_audit
 from sklearn.model_selection import train_test_split
 from services.evaluation_protocol import ValidationProtocolAdvisor
 from services.resource_policy import ResourcePolicy
@@ -112,19 +111,19 @@ def run_dl_step(df: pd.DataFrame, target: str | None = None, seed: int = 42, com
             compute.diagnostics.append(f"CUDA execution failed safely: {exc}")
             compute.message += " CUDA execution failed safely; using CPU MLP."
     if model_obj is None:
-        estimator = MLPClassifier(hidden_layer_sizes=(128,64), max_iter=1000, early_stopping=True, n_iter_no_change=20, tol=1e-3, random_state=seed) if task=="classification" else MLPRegressor(hidden_layer_sizes=(128,64), max_iter=1000, early_stopping=True, n_iter_no_change=20, tol=1e-3, random_state=seed)
+        estimator = make_mlp(task, seed)
         pipe=Pipeline([("pre",build_preprocessor(X)),("model",estimator)])
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            pipe.fit(Xtr,ytr)
-        convergence_warnings=[str(w.message) for w in caught if issubclass(w.category,ConvergenceWarning)]
-        pred=pipe.predict(Xte); model_obj=pipe
-        if convergence_warnings: metrics_warning=convergence_warnings[:5]
-        else: metrics_warning=[]
+        model_obj, convergence = fit_with_convergence_audit(
+            pipe,
+            lambda: pipe.fit(Xtr, ytr),
+            retry_factory=(lambda: Pipeline([("pre",build_preprocessor(X)),("model",make_mlp(task, seed, max_iter=3000))]))
+        )
+        pred=model_obj.predict(Xte)
+        metrics_warning=convergence.get("warnings", [])
         if task=="classification": metrics={"accuracy":float(accuracy_score(yte,pred)),"f1_weighted":float(f1_score(yte,pred,average="weighted"))}; evaluation=ErrorAnalysisEngine.classification(yte,pred)
         else: metrics={"r2":float(r2_score(yte,pred)),"mae":float(mean_absolute_error(yte,pred)),"rmse":float(mean_squared_error(yte,pred)**.5)}; evaluation=ErrorAnalysisEngine.regression(yte,pred)
         metrics["error_analysis"]=evaluation
-        if metrics_warning: metrics["convergence_warnings"]=metrics_warning
+        metrics["convergence"]=convergence
     primary="f1_weighted" if task=="classification" else "r2"
     pred_final = model_obj.predict(Xte) if hasattr(model_obj, "predict") else (
         np.argmax(model_obj(torch.tensor(Xte.toarray() if hasattr(Xte,"toarray") else np.asarray(Xte),dtype=torch.float32).to("cuda" if compute.mode in {"GPU","CPU+GPU"} and compute.gpu_available else "cpu")).detach().cpu().numpy(),axis=1)
@@ -196,8 +195,9 @@ The function keeps inputs explicit, avoids hidden global mutation where practica
 
 The function keeps inputs explicit, avoids hidden global mutation where practical, and returns evidence or application state required by its caller.
 """
-                    est=_MC(hidden_layer_sizes=(128,64),max_iter=350,early_stopping=True,random_state=rs) if task=="classification" else _MR(hidden_layer_sizes=(128,64),max_iter=350,early_stopping=True,random_state=rs)
-                    pp=_Pipe([("pre",build_preprocessor(Xtr)),("model",est)]); pp.fit(Xtr,ytr); pr=pp.predict(Xte)
+                    est=make_mlp(task, rs, max_iter=1500)
+                    pp=_Pipe([("pre",build_preprocessor(Xtr)),("model",est)])
+                    pp.fit(Xtr,ytr); pr=pp.predict(Xte)
                     mm={"accuracy":float(accuracy_score(yte,pr)),"f1_weighted":float(f1_score(yte,pr,average="weighted"))} if task=="classification" else {"r2":float(r2_score(yte,pr)),"mae":float(mean_absolute_error(yte,pr)),"rmse":float(mean_squared_error(yte,pr)**.5)}
                     return {"metrics":mm}
                 seed_stability=DLValidationEngine.seed_stability(_seed_run,[seed,seed+1],task)
